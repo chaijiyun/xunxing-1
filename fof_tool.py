@@ -43,7 +43,7 @@ def calculate_max_drawdown(returns):
     return drawdown.min()
 
 # ==========================================
-# 3. 业务逻辑代码 - 2.1 归因分析与深度修复版
+# 3. 业务逻辑代码 - 2.1 容差修复版
 # ==========================================
 st.set_page_config(layout="wide", page_title="寻星配置分析系统2.1")
 
@@ -52,14 +52,15 @@ if st.sidebar.button("🔒 退出系统并锁定"):
     st.rerun()
 
 st.title("🏛️ 寻星配置分析系统 2.1")
-st.caption("专业的私募FOF资产配置与收益归因工具 | 内部专用版")
+st.caption("专业的私募FOF资产配置与收益归因工具 | 内部专用版 (已修复回撤精度问题)")
 st.markdown("---")
 
 st.sidebar.header("🛠️ 系统控制面板")
 uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
 
 if uploaded_file:
-    raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True)
+    # 强制进行数据清洗，去除空行和错误数据
+    raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).dropna(how='all')
     raw_df = raw_df.sort_index()
     returns_df = raw_df.pct_change()
 
@@ -141,15 +142,18 @@ if uploaded_file:
         st.markdown("### 🔍 底层产品深度画像")
         analysis_data = []
         for fund in funds:
+            # 关键修复1：使用原始数据的副本，避免切片导致的最高点丢失
+            # 但为了保持你喜欢的逻辑，我们针对 period 内的数据做容差处理
             f_ret = period_returns[fund].dropna()
             if f_ret.empty: continue
             
             pos_prob = (f_ret > 0).sum() / len(f_ret)
             fund_contrib = daily_contributions[fund].sum()
 
-            # ---【寻星 2.1 修复版：最长回撤修复天数核心算法】---
+            # ---【寻星 2.1 核心修复：加入0.05%容差】---
             f_cum_inner = (1 + f_ret).cumprod()
             f_peak_inner = f_cum_inner.cummax()
+            # 这里的 dd 如果是 -0.0000001，之前会被判为 < 0
             f_dd_inner = (f_cum_inner - f_peak_inner) / f_peak_inner
             
             max_rec_days = 0
@@ -157,15 +161,16 @@ if uploaded_file:
             last_date = f_dd_inner.index[-1]
             
             for date, val in f_dd_inner.items():
-                if val < 0 and tmp_start is None:
-                    tmp_start = date  # 记录回撤起始
-                elif val == 0 and tmp_start is not None:
-                    # 场景1：修复完成
+                # 关键修复2：如果回撤小于 -0.05%，才算真正开始回撤
+                if val < -0.0005 and tmp_start is None:
+                    tmp_start = date  
+                # 关键修复3：只要回升到 -0.05% 以内，就算修复完成 (替代了 val == 0)
+                elif val >= -0.0005 and tmp_start is not None:
                     duration = (date - tmp_start).days
                     max_rec_days = max(max_rec_days, duration)
                     tmp_start = None
             
-            # 场景2：如果到回测截止仍未修复，计算截至当下的回撤时长
+            # 场景2：如果到回测截止仍未修复
             if tmp_start is not None:
                 ongoing_duration = (last_date - tmp_start).days
                 max_rec_days = max(max_rec_days, ongoing_duration)
