@@ -19,10 +19,11 @@ if not st.session_state["authenticated"]:
         st.markdown("""
             <div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px; border: 1px solid #dcdfe6;'>
                 <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统</h2>
-                <p style='color: #666;'>请输入授权码 281699 访问</p>
+                <p style='color: #666;'>内部专用版 | 请输入授权码访问</p>
             </div>
         """, unsafe_allow_html=True)
-        pwd = st.text_input("", type="password", placeholder="在此输入密码并按回车...")
+        # 这里去掉了原本显示在占位符里的数字
+        pwd = st.text_input("", type="password", placeholder="请输入授权码并按回车...")
         if st.button("进入系统", use_container_width=True):
             if pwd == "281699":
                 st.session_state["authenticated"] = True
