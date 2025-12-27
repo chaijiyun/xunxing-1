@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+
+# 自定义金融计算函数（替代已经坏掉的 empyrical）
 def calculate_sharpe(returns):
+    if returns.std() == 0: return 0
     return (returns.mean() / returns.std()) * (252 ** 0.5)
 
 def calculate_max_drawdown(returns):
@@ -166,5 +169,6 @@ if uploaded_file:
 else:
 
     st.info("👋 欢迎使用寻星配置分析系统1.0！请上传Excel文件开始。")
+
 
 
