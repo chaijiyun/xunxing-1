@@ -79,7 +79,7 @@ if uploaded_file:
         years_span = max(days_span / 365.25, 0.01)
         total_ret = fof_cum_nav[-1] - 1
         ann_ret = (1 + total_ret)**(1/years_span)-1
-        mdd = max_drawdown(fof_daily_returns)
+        mdd = calculate_max_drawdown(fof_daily_returns)
         vol = fof_daily_returns.std() * np.sqrt(252)
         sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
 
@@ -169,6 +169,7 @@ if uploaded_file:
 else:
 
     st.info("👋 欢迎使用寻星配置分析系统1.0！请上传Excel文件开始。")
+
 
 
 
