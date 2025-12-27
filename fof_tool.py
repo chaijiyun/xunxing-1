@@ -149,23 +149,44 @@ if uploaded_file:
             st.plotly_chart(fig_contrib, use_container_width=True)
             st.info("💡 解释：该图展示了在选定时间内，每只基金由于其自身的涨跌及其在组合中的权重，分别为最终的累计收益率贡献了多少个百分点。")
 
-        # --- 深度分析表与相关性 ---
+        # --- 3. 深度分析表与相关性 ---
         st.markdown("### 🔍 底层产品深度画像")
         analysis_data = []
         for fund in funds:
             f_ret = period_returns[fund].dropna()
             if f_ret.empty: continue
+            
+            # 1. 胜率
             pos_prob = (f_ret > 0).sum() / len(f_ret)
             
-            # 归因数据
+            # 2. 归因
             fund_contrib = daily_contributions[fund].sum()
+
+            # 3. 计算真正的【最长回撤修复天数】(修复 7 天的 Bug)
+            f_cum = (1 + f_ret).cumprod()
+            f_rolling_max = f_cum.cummax()
+            f_dd = (f_cum - f_rolling_max) / f_rolling_max
+            
+            max_rec_days = 0
+            tmp_start = None
+            for date, val in f_dd.items():
+                if val < 0 and tmp_start is None:
+                    tmp_start = date # 开始进入回撤
+                elif val == 0 and tmp_start is not None:
+                    # 回到 0，说明修复完成
+                    duration = (date - tmp_start).days
+                    if duration > max_rec_days:
+                        max_rec_days = duration
+                    tmp_start = None # 重置，等待下一次回撤
+            
+            # 如果区间结束还没修复，也要计算当前回撤的时长（可选，此处暂保持只计已修复的）
 
             analysis_data.append({
                 "产品": fund,
                 "当前配置权重": f"{weights_series[fund]*100:.1f}%",
                 "本期累计贡献": f"{fund_contrib*100:.2f}%",
                 "正收益概率": f"{pos_prob*100:.1f}%",
-                "最长回撤修复(天)": (lambda d: (d.index[1:] - d.index[:-1]).days.max() if len(d)>1 else 0)(f_ret) # 简化逻辑
+                "最长回撤修复(天)": f"{max_rec_days} 天"
             })
         st.table(pd.DataFrame(analysis_data))
         
@@ -173,3 +194,4 @@ if uploaded_file:
         st.dataframe(period_returns.corr().style.background_gradient(cmap='RdYlGn').format("{:.2f}"))
 else:
     st.info("👋 欢迎使用寻星配置分析系统2.0！请上传数据开始深度分析。")
+
