@@ -4,130 +4,166 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==========================================
-# 1. 醒目的版本标志 (用于确认部署成功)
+# 1. 版本与身份验证
 # ==========================================
-VERSION = "1.6-FINAL-PRO" 
+VERSION = "1.7-OFFICIAL" 
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
-    st.set_page_config(page_title="🔐 身份验证", page_icon="🏛️")
-    st.markdown(f"<div style='text-align:center;'><h2>🏛️ 寻星投研系统 {VERSION}</h2><p>内部专用授权版本</p></div>", unsafe_allow_html=True)
-    pwd = st.text_input("授权码", type="password")
-    if st.button("进入系统", use_container_width=True):
-        if pwd == "281699":
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("授权码错误")
+    st.set_page_config(page_title="寻星投研系统", page_icon="🏛️")
+    st.markdown(f"<div style='text-align:center; margin-top:50px;'><h2>🏛️ 寻星配置分析系统 {VERSION}</h2><p>专业资产配置与深度回撤穿透工具</p></div>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        pwd = st.text_input("授权码", type="password", placeholder="请输入内部授权码...")
+        if st.button("立即进入系统", use_container_width=True):
+            if pwd == "281699":
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("授权码错误，请联系系统管理员")
     st.stop()
 
 # ==========================================
-# 2. 核心穿透算法：彻底解决空值与 294 天死锁
+# 2. 核心金融算法：严谨修复时长计算
 # ==========================================
-def robust_recovery_calc(series):
+def calculate_recovery_days(series):
     """
-    暴力穿透算法：
-    1. 强制数值化，解决 Excel 格式问题。
-    2. 线性插值，填补 Excel 空值(NaN)坑位。
-    3. 0.1% 容差，解决浮点数精度导致的不回正。
+    专门解决空值导致的天数膨胀问题：
+    1. 剔除无效点
+    2. 记录真实高点日期
+    3. 自然日相减
     """
-    # 处理空值：先插值补齐中间，再补齐两头
-    s = pd.to_numeric(series, errors='coerce').interpolate(limit_direction='both').ffill().bfill()
-    if s.empty: return 0, 0
+    # 强制数值转换并剔除空值，不进行任何“补全”操作，只认真实数据
+    s = pd.to_numeric(series, errors='coerce').dropna()
+    if len(s) < 2: return 0, 0
     
-    max_rec, ongoing = 0, 0
-    peak_val, peak_dt = -np.inf, None
-    in_dd = False
+    max_rec_days = 0
+    current_ongoing = 0
     
-    for dt, val in s.items():
-        # 只要回到最高点的 99.9% 就算修复
-        if val >= peak_val or (peak_val > 0 and (val / peak_val) >= 0.999):
-            if in_dd:
-                max_rec = max(max_rec, (dt - peak_dt).days)
-                in_dd = False
-            peak_val, peak_dt = val, dt
+    # 计算滚动最高点
+    roll_max = s.cummax()
+    # 计算回撤，并给定 0.05% 的容差（解决精度误差）
+    drawdown_series = (s / roll_max) - 1
+    
+    last_peak_dt = s.index[0]
+    is_in_pit = False
+    
+    for i in range(len(s)):
+        current_dt = s.index[i]
+        dd_val = drawdown_series.iloc[i]
+        
+        # 判定：只要回撤大于 -0.0005（即回升到99.95%以上），视为修复
+        if dd_val >= -0.0005:
+            if is_in_pit:
+                # 刚从坑里爬出来，计算从掉下去前的最高点到今天的天数
+                duration = (current_dt - last_peak_dt).days
+                max_rec_days = max(max_rec_days, duration)
+                is_in_pit = False
+            last_peak_dt = current_dt # 刷新最高点日期
         else:
-            in_dd = True
+            is_in_pit = True
             
-    if in_dd and peak_dt:
-        ongoing = (s.index[-1] - peak_dt).days
-    return max_rec, ongoing
+    # 如果数据最后一天还在坑里
+    if is_in_pit:
+        current_ongoing = (s.index[-1] - last_peak_dt).days
+        
+    return max_rec_days, current_ongoing
 
 # ==========================================
 # 3. 主界面布局
 # ==========================================
 st.set_page_config(layout="wide", page_title=f"寻星系统 {VERSION}")
+
+if st.sidebar.button("🔒 退出并锁定"):
+    st.session_state["authenticated"] = False
+    st.rerun()
+
 st.title(f"🏛️ 寻星配置分析系统 {VERSION}")
-st.caption("核心更新：空值线性修复逻辑 | 全局最高点对撞算法 | 业绩基准对比")
+st.caption("2025 内部投研版 | 已修复空值干扰及天数计算溢出问题")
 st.markdown("---")
 
-uploaded_file = st.sidebar.file_uploader("1. 上传净值 Excel", type=["xlsx"])
+uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
 
 if uploaded_file:
-    # A. 加载原始全量数据
-    raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index()
-    benchmarks = [c for c in raw_df.columns if any(x in str(c) for x in ["300", "500"])]
-    funds = [c for c in raw_df.columns if c not in benchmarks]
+    # A. 原始数据加载与初步清洗
+    df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index()
+    
+    # 自动识别指数与基金产品
+    all_cols = df_raw.columns.tolist()
+    benchmarks = [c for c in all_cols if any(x in str(c) for x in ["300", "500"])]
+    funds = [c for c in all_cols if c not in benchmarks]
 
-    # B. 策略参数
-    st.sidebar.subheader("2. 策略参数")
-    start_date = st.sidebar.date_input("开始日期", value=raw_df.index.min())
-    end_date = st.sidebar.date_input("结束日期", value=raw_df.index.max())
+    # B. 侧边栏交互设置
+    st.sidebar.subheader("2. 策略配置")
+    min_date, max_date = df_raw.index.min().to_pydatetime(), df_raw.index.max().to_pydatetime()
+    start_date = st.sidebar.date_input("分析开始日期", value=min_date)
+    end_date = st.sidebar.date_input("分析结束日期", value=max_date)
+    
+    # 权重滑块
     target_weights = {f: st.sidebar.slider(f, 0.0, 1.0, 1.0/len(funds)) for f in funds}
 
-    # C. 指标计算 (关键：基于原始全量数据 raw_df)
-    st.markdown("### 🔍 深度画像排查 (空值修复版)")
-    analysis = []
-    
-    # 为了组合计算，先制作一个平滑的 period_df
-    smooth_df = raw_df.interpolate().ffill().bfill()
-    mask = (smooth_df.index >= pd.Timestamp(start_date)) & (smooth_df.index <= pd.Timestamp(end_date))
-    period_df = smooth_df.loc[mask]
-    
-    for item in (funds + benchmarks):
-        # 调用暴力穿透算法
-        max_h, ongoing = robust_recovery_calc(raw_df[item])
-        
-        # 计算所选区间收益
-        p_sub = period_df[item]
-        p_ret = (p_sub.iloc[-1] / p_sub.iloc[0] - 1) if len(p_sub) > 0 else 0
-        
-        analysis.append({
-            "名称": item,
-            "历史最长修复": f"{max_h} 天",
-            "当前持续时长": f"{ongoing} 天" if ongoing > 0 else "✅ 已创新高",
-            "状态判定": "⚠️ 正在回撤" if ongoing > 0 else "✅ 正常",
-            "区间累计收益": f"{p_ret*100:.2f}%"
-        })
-    st.table(pd.DataFrame(analysis))
-
-    # D. 组合业绩看板
+    # C. 数据切片处理
+    # 对于组合计算，需要对缺失数据进行前向填充
+    df_filled = df_raw.ffill()
+    mask = (df_filled.index >= pd.Timestamp(start_date)) & (df_filled.index <= pd.Timestamp(end_date))
+    period_df = df_filled.loc[mask]
     returns_df = period_df.pct_change().fillna(0)
+
+    # D. 深度画像分析表 (核心修正点)
+    st.markdown("### 🔍 深度指标排查 (已剔除空值干扰)")
+    analysis_data = []
+    for item in (funds + benchmarks):
+        # 传入原始全量序列 raw_df[item]，让算法识别全局最高点
+        max_h, ongoing = calculate_recovery_days(df_raw[item])
+        
+        # 计算特定区间的收益
+        sub_nav = df_raw[item].loc[mask].dropna()
+        p_ret = (sub_nav.iloc[-1] / sub_nav.iloc[0] - 1) if len(sub_nav) > 1 else 0
+
+        analysis_data.append({
+            "名称": item,
+            "类型": "底层产品" if item in funds else "业绩基准",
+            "历史最长修复": f"{max_h} 天",
+            "当前回撤持续": f"{ongoing} 天" if ongoing > 0 else "✅ 已创新高",
+            "区间累计收益": f"{p_ret*100:.2f}%",
+            "状态状态": "⚠️ 回撤中" if ongoing > 0 else "✅ 正常"
+        })
+    st.table(pd.DataFrame(analysis_data))
+
+    # E. 组合业绩计算
     w_sum = sum(target_weights.values()) or 1
     w_series = pd.Series({k: v/w_sum for k, v in target_weights.items()})
     fof_ret = (returns_df[funds] * w_series).sum(axis=1)
     fof_cum = (1 + fof_ret).cumprod()
 
-    c1, c2, c3 = st.columns(3)
+    # 指标看板
+    c1, c2, c3, c4 = st.columns(4)
     total_fof_ret = fof_cum.iloc[-1] - 1
-    mdd_fof = ((fof_cum / fof_cum.expanding().max()) - 1).min()
+    peak = fof_cum.expanding().max()
+    mdd_fof = ((fof_cum / peak) - 1).min()
+    days_span = max((fof_cum.index[-1] - fof_cum.index[0]).days, 1)
+    ann_ret = (1 + total_fof_ret)**(365.25/days_span) - 1
+    
     c1.metric("组合累计收益", f"{total_fof_ret*100:.2f}%")
-    c2.metric("组合最大回撤", f"{mdd_fof*100:.2f}%")
-    c3.metric("成分股数量", len(funds))
+    c2.metric("组合年化收益", f"{ann_ret*100:.2f}%")
+    c3.metric("组合最大回撤", f"{mdd_fof*100:.2f}%")
+    c4.metric("成分产品数量", len(funds))
 
-    # E. 净值曲线图
+    # F. 净值曲线图
     fig = go.Figure()
     for b in benchmarks:
-        b_nav = period_df[b] / period_df[b].iloc[0]
-        fig.add_trace(go.Scatter(x=b_nav.index, y=b_nav, name=f'基准-{b}', line=dict(dash='dash')))
+        b_nav = df_raw[b].loc[mask].dropna()
+        if not b_nav.empty:
+            fig.add_trace(go.Scatter(x=b_nav.index, y=b_nav/b_nav.iloc[0], name=f'基准-{b}', line=dict(dash='dash', width=2)))
     fig.add_trace(go.Scatter(x=fof_cum.index, y=fof_cum, name='寻星组合', line=dict(color='red', width=4)))
+    fig.update_layout(title="组合净值 vs 业绩基准", hovermode="x unified", height=600)
     st.plotly_chart(fig, use_container_width=True)
 
-    # F. 相关性矩阵
-    st.subheader("📊 资产相关性")
+    # G. 相关性矩阵
+    st.subheader("📊 底层资产相关性矩阵")
     st.dataframe(returns_df[funds].corr().style.background_gradient(cmap='RdYlGn').format("{:.2f}"))
 
 else:
-    st.info("👋 请上传包含净值数据的 Excel 文件，系统将自动穿透处理空值。")
+    st.info("👋 欢迎使用寻星投研系统。请在左侧上传 Excel 净值表开始分析。")
