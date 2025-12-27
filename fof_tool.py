@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-#from empyrical import max_drawdown, sharpe_ratio
+
 
 # --- 系统配置 ---
 st.set_page_config(layout="wide", page_title="寻星配置分析系统1.0")
@@ -159,3 +159,4 @@ if uploaded_file:
 else:
 
     st.info("👋 欢迎使用寻星配置分析系统1.0！请上传Excel文件开始。")
+
