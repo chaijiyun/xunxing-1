@@ -3,7 +3,42 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
-# 自定义金融计算函数（替代已经坏掉的 empyrical）
+# ==========================================
+# 1. 访问安全设置（新增登录逻辑）
+# ==========================================
+# 你可以在这里修改你的专属访问密码
+ACCESS_PASSWORD = "xunxing2025" 
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+def login():
+    """显示登录界面"""
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+            <div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px; border: 1px solid #dcdfe6;'>
+                <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统</h2>
+                <p style='color: #666;'>内部专用版 | 请输入授权码访问</p>
+            </div>
+        """, unsafe_allow_html=True)
+        pwd = st.text_input("", type="password", placeholder="输入密码后按回车...")
+        if st.button("确认登录", use_container_width=True):
+            if pwd == ACCESS_PASSWORD:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("密码错误，请联系管理员。")
+    st.stop()
+
+# 检查是否已登录
+if not st.session_state["authenticated"]:
+    login()
+
+# ==========================================
+# 2. 自定义金融计算函数 (已为你保留)
+# ==========================================
 def calculate_sharpe(returns):
     if returns.std() == 0: return 0
     return (returns.mean() / returns.std()) * (252 ** 0.5)
@@ -14,12 +49,21 @@ def calculate_max_drawdown(returns):
     drawdown = (cumulative/peak) - 1
     return drawdown.min()
 
+# ==========================================
+# 3. 业务逻辑代码 (你原本的寻星系统)
+# ==========================================
 # --- 系统配置 ---
 st.set_page_config(layout="wide", page_title="寻星配置分析系统1.0")
 
 # --- 网页标题 ---
 st.title("🏛️ 寻星配置分析系统 1.0")
 st.caption("专业的私募FOF资产配置与深度产品画像工具 | 内部专用版")
+
+# 添加退出登录按钮在右上角
+if st.sidebar.button("🔒 退出登录"):
+    st.session_state["authenticated"] = False
+    st.rerun()
+
 st.markdown("---")
 
 # --- 侧边栏：数据与参数 ---
@@ -79,6 +123,8 @@ if uploaded_file:
         years_span = max(days_span / 365.25, 0.01)
         total_ret = fof_cum_nav[-1] - 1
         ann_ret = (1 + total_ret)**(1/years_span)-1
+        
+        # 使用你自定义的计算函数
         mdd = calculate_max_drawdown(fof_daily_returns)
         vol = fof_daily_returns.std() * np.sqrt(252)
         sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
@@ -110,66 +156,4 @@ if uploaded_file:
             title=f"寻星组合分析图 (当前频率: {freq_option})",
             xaxis=dict(
                 title="日期", 
-                tickformat="%Y-%m", 
-                dtick=dtick_val, 
-                tickangle=-45, 
-                showgrid=True
-            ),
-            yaxis=dict(title="累计净值", side='left'),
-            yaxis2=dict(
-                title="回撤幅度", 
-                overlaying='y', 
-                side='right', 
-                range=[-0.6, 0], 
-                tickformat=".0%"
-            ),
-            hovermode="x unified", 
-            height=600, 
-            margin=dict(b=100),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # --- 3. 深度分析表 ---
-        st.markdown("### 🔍 底层产品深度指标分析")
-        analysis_data = []
-        for fund in funds:
-            f_ret = period_returns[fund].dropna()
-            if f_ret.empty: continue
-            f_cum = (1 + f_ret).cumprod()
-            pos_prob = (f_ret > 0).sum() / len(f_ret)
-            
-            # 窗口逻辑
-            window = 52 if len(f_ret) > 60 else 12
-            rolling_ret = f_cum.pct_change(periods=window)
-            win_rate = (rolling_ret > 0).sum() / len(rolling_ret.dropna()) if not rolling_ret.dropna().empty else 0
-            
-            f_rolling_max = f_cum.cummax()
-            f_dd = (f_cum - f_rolling_max) / f_rolling_max
-            max_rec, tmp_start = 0, None
-            for date, val in f_dd.items():
-                if val < 0 and tmp_start is None: tmp_start = date
-                elif val == 0 and tmp_start is not None:
-                    max_rec = max(max_rec, (date - tmp_start).days)
-                    tmp_start = None
-            
-            analysis_data.append({
-                "产品": fund,
-                "正收益概率(胜率)": f"{pos_prob*100:.1f}%",
-                "持有1年盈利概率": f"{win_rate*100:.1f}%",
-                "最长回撤修复天数": f"{max_rec} 天"
-            })
-        st.table(pd.DataFrame(analysis_data))
-
-        # --- 4. 相关性 ---
-        st.subheader("📊 底层资产相关性")
-        st.dataframe(period_returns.corr().style.background_gradient(cmap='RdYlGn').format("{:.2f}"))
-    else:
-        st.warning("所选日期范围内没有足够数据，请调整开始日期。")
-else:
-
-    st.info("👋 欢迎使用寻星配置分析系统1.0！请上传Excel文件开始。")
-
-
-
-
+                tickformat
