@@ -4,10 +4,10 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==========================================
-# 1. 访问安全设置（新增登录逻辑）
+# 1. 访问安全设置
 # ==========================================
-# 你可以在这里修改你的专属访问密码
-ACCESS_PASSWORD = "xunxing2025" 
+# 密码已更新为：281699
+ACCESS_PASSWORD = "281699" 
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -23,7 +23,7 @@ def login():
                 <p style='color: #666;'>内部专用版 | 请输入授权码访问</p>
             </div>
         """, unsafe_allow_html=True)
-        pwd = st.text_input("", type="password", placeholder="输入密码后按回车...")
+        pwd = st.text_input("", type="password", placeholder="输入密码 281699 后按回车...")
         if st.button("确认登录", use_container_width=True):
             if pwd == ACCESS_PASSWORD:
                 st.session_state["authenticated"] = True
@@ -37,7 +37,7 @@ if not st.session_state["authenticated"]:
     login()
 
 # ==========================================
-# 2. 自定义金融计算函数 (已为你保留)
+# 2. 自定义金融计算函数
 # ==========================================
 def calculate_sharpe(returns):
     if returns.std() == 0: return 0
@@ -50,58 +50,46 @@ def calculate_max_drawdown(returns):
     return drawdown.min()
 
 # ==========================================
-# 3. 业务逻辑代码 (你原本的寻星系统)
+# 3. 业务逻辑代码 (寻星系统核心)
 # ==========================================
-# --- 系统配置 ---
 st.set_page_config(layout="wide", page_title="寻星配置分析系统1.0")
 
-# --- 网页标题 ---
 st.title("🏛️ 寻星配置分析系统 1.0")
 st.caption("专业的私募FOF资产配置与深度产品画像工具 | 内部专用版")
 
-# 添加退出登录按钮在右上角
 if st.sidebar.button("🔒 退出登录"):
     st.session_state["authenticated"] = False
     st.rerun()
 
 st.markdown("---")
 
-# --- 侧边栏：数据与参数 ---
 st.sidebar.header("🛠️ 系统控制面板")
 uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
 
 if uploaded_file:
-    # 加载原始数据
     raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True)
     raw_df = raw_df.sort_index()
-    
-    # 提取收益率
     returns_df = raw_df.pct_change()
 
-    # 2. 日期筛选
     st.sidebar.subheader("2. 回测区间设置")
     min_date = raw_df.index.min().to_pydatetime()
     max_date = raw_df.index.max().to_pydatetime()
     start_date = st.sidebar.date_input("开始日期", value=min_date, min_value=min_date, max_value=max_date)
     end_date = st.sidebar.date_input("结束日期", value=max_date, min_value=min_date, max_value=max_date)
     
-    # 3. 权重设置
     funds = raw_df.columns.tolist()
     st.sidebar.subheader("3. 目标配置比例")
     target_weights = {}
     for fund in funds:
         target_weights[fund] = st.sidebar.slider(f"{fund}", 0.0, 1.0, 1.0/len(funds))
     
-    # 4. 刻度频率选择
     st.sidebar.subheader("4. 图表显示设置")
     freq_option = st.sidebar.selectbox("横轴日期频率", ["月度展示", "季度展示"])
     dtick_val = "M1" if freq_option == "月度展示" else "M3"
 
-    # --- 核心计算逻辑 ---
     mask = (returns_df.index >= pd.Timestamp(start_date)) & (returns_df.index <= pd.Timestamp(end_date))
     period_returns = returns_df.loc[mask]
 
-    # 权重归一化
     total_tw = sum(target_weights.values()) if sum(target_weights.values()) != 0 else 1
     weights_series = pd.Series({k: v / total_tw for k, v in target_weights.items()})
 
@@ -116,7 +104,6 @@ if uploaded_file:
     fof_daily_returns = period_returns.apply(calculate_dynamic_fof, axis=1)
     fof_cum_nav = (1 + fof_daily_returns).cumprod()
 
-    # --- 1. 指标展示 ---
     if not fof_cum_nav.empty:
         c1, c2, c3, c4 = st.columns(4)
         days_span = (fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days
@@ -124,7 +111,6 @@ if uploaded_file:
         total_ret = fof_cum_nav[-1] - 1
         ann_ret = (1 + total_ret)**(1/years_span)-1
         
-        # 使用你自定义的计算函数
         mdd = calculate_max_drawdown(fof_daily_returns)
         vol = fof_daily_returns.std() * np.sqrt(252)
         sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
@@ -134,9 +120,7 @@ if uploaded_file:
         c3.metric("最大回撤", f"{mdd*100:.2f}%")
         c4.metric("夏普比率", f"{sharpe:.2f}")
 
-        # --- 2. 绘图逻辑 ---
         fig = go.Figure()
-
         for fund in funds:
             f_ret = period_returns[fund].dropna()
             if not f_ret.empty:
@@ -154,6 +138,26 @@ if uploaded_file:
 
         fig.update_layout(
             title=f"寻星组合分析图 (当前频率: {freq_option})",
-            xaxis=dict(
-                title="日期", 
-                tickformat
+            xaxis=dict(title="日期", tickformat="%Y-%m", dtick=dtick_val, tickangle=-45, showgrid=True),
+            yaxis=dict(title="累计净值", side='left'),
+            yaxis2=dict(title="回撤幅度", overlaying='y', side='right', range=[-0.6, 0], tickformat=".0%"),
+            hovermode="x unified", height=600, margin=dict(b=100),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### 🔍 底层产品深度指标分析")
+        analysis_data = []
+        for fund in funds:
+            f_ret = period_returns[fund].dropna()
+            if f_ret.empty: continue
+            f_cum = (1 + f_ret).cumprod()
+            pos_prob = (f_ret > 0).sum() / len(f_ret)
+            window = 52 if len(f_ret) > 60 else 12
+            rolling_ret = f_cum.pct_change(periods=window)
+            win_rate = (rolling_ret > 0).sum() / len(rolling_ret.dropna()) if not rolling_ret.dropna().empty else 0
+            
+            f_rolling_max = f_cum.cummax()
+            f_dd = (f_cum - f_rolling_max) / f_rolling_max
+            max_rec, tmp_start = 0, None
+            for date, val in f
