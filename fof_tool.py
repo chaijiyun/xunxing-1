@@ -9,9 +9,7 @@ import plotly.graph_objects as go
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
-# 如果未登录，只显示登录界面，绝对不运行后续代码
 if not st.session_state["authenticated"]:
-    # 稍微美化一下登录界面
     st.set_page_config(page_title="身份验证", page_icon="🔐")
     st.markdown("<br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -19,176 +17,150 @@ if not st.session_state["authenticated"]:
         st.markdown("""
             <div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px; border: 1px solid #dcdfe6;'>
                 <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统</h2>
-                <p style='color: #666;'>内部专用版 | 请输入授权码访问</p>
+                <p style='color: #666;'>内部专用版 | 业绩基准与回撤修正版</p>
             </div>
         """, unsafe_allow_html=True)
-        # 这里去掉了原本显示在占位符里的数字
         pwd = st.text_input("", type="password", placeholder="请输入授权码并按回车...")
         if st.button("进入系统", use_container_width=True):
             if pwd == "281699":
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
-                st.error("密码错误，请联系管理员")
-    st.stop()  # 关键点：未通过验证时，强制停止后续所有代码运行
+                st.error("密码错误")
+    st.stop()
 
 # ==========================================
-# 2. 验证通过后 - 自定义金融计算函数
+# 2. 核心金融计算函数
 # ==========================================
-def calculate_sharpe(returns):
-    if returns.std() == 0: return 0
-    return (returns.mean() / returns.std()) * (252 ** 0.5)
-
 def calculate_max_drawdown(returns):
+    if returns.empty: return 0
     cumulative = (1 + returns).cumprod()
     peak = cumulative.expanding(min_periods=1).max()
     drawdown = (cumulative/peak) - 1
     return drawdown.min()
 
 # ==========================================
-# 3. 验证通过后 - 主业务代码
+# 3. 主业务代码
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星配置分析系统1.0")
+st.set_page_config(layout="wide", page_title="寻星配置分析系统1.2")
 
-# 侧边栏退出按钮
 if st.sidebar.button("🔒 退出系统并锁定"):
     st.session_state["authenticated"] = False
     st.rerun()
 
-st.title("🏛️ 寻星配置分析系统 1.0")
-st.caption("专业的私募FOF资产配置与深度产品画像工具 | 内部专用版")
+st.title("🏛️ 寻星配置分析系统 1.2")
+st.caption("专业的私募FOF资产配置、业绩基准对比及回撤穿透工具")
 st.markdown("---")
 
-# --- 侧边栏：数据与参数 ---
 st.sidebar.header("🛠️ 系统控制面板")
-uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
+uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (含指数)", type=["xlsx"])
 
 if uploaded_file:
-    # 加载原始数据
     raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True)
     raw_df = raw_df.sort_index()
-    
-    # 提取收益率
     returns_df = raw_df.pct_change()
 
-    # 2. 日期筛选
+    # 自动识别业绩基准 (列名含300或500)
+    all_cols = raw_df.columns.tolist()
+    benchmarks = [c for c in all_cols if "300" in str(c) or "500" in str(c)]
+    funds = [c for c in all_cols if c not in benchmarks]
+
     st.sidebar.subheader("2. 回测区间设置")
     min_date = raw_df.index.min().to_pydatetime()
     max_date = raw_df.index.max().to_pydatetime()
-    start_date = st.sidebar.date_input("开始日期", value=min_date, min_value=min_date, max_value=max_date)
-    end_date = st.sidebar.date_input("结束日期", value=max_date, min_value=min_date, max_value=max_date)
+    start_date = st.sidebar.date_input("开始日期", value=min_date)
+    end_date = st.sidebar.date_input("结束日期", value=max_date)
     
-    # 3. 权重设置
-    funds = raw_df.columns.tolist()
     st.sidebar.subheader("3. 目标配置比例")
-    target_weights = {}
-    for fund in funds:
-        target_weights[fund] = st.sidebar.slider(f"{fund}", 0.0, 1.0, 1.0/len(funds))
+    target_weights = {f: st.sidebar.slider(f"{f}", 0.0, 1.0, 1.0/len(funds)) for f in funds}
     
-    # 4. 刻度频率选择
-    st.sidebar.subheader("4. 图表显示设置")
     freq_option = st.sidebar.selectbox("横轴日期频率", ["月度展示", "季度展示"])
     dtick_val = "M1" if freq_option == "月度展示" else "M3"
 
-    # --- 核心计算逻辑 ---
+    # --- 核心计算 ---
     mask = (returns_df.index >= pd.Timestamp(start_date)) & (returns_df.index <= pd.Timestamp(end_date))
     period_returns = returns_df.loc[mask]
 
-    # 权重归一化
-    total_tw = sum(target_weights.values()) if sum(target_weights.values()) != 0 else 1
+    # 组合计算
+    total_tw = sum(target_weights.values()) or 1
     weights_series = pd.Series({k: v / total_tw for k, v in target_weights.items()})
-
+    
     def calculate_dynamic_fof(daily_ret):
-        available = daily_ret.notna() 
+        available = daily_ret[funds].notna() 
         if not available.any(): return 0.0
-        curr_w = weights_series[available]
-        if curr_w.sum() == 0: return 0.0
-        actual_w = curr_w / curr_w.sum()
+        actual_w = weights_series[available] / weights_series[available].sum()
         return (daily_ret[available] * actual_w).sum()
 
     fof_daily_returns = period_returns.apply(calculate_dynamic_fof, axis=1)
     fof_cum_nav = (1 + fof_daily_returns).cumprod()
 
-    # --- 1. 指标展示 ---
     if not fof_cum_nav.empty:
+        # 指标看板
         c1, c2, c3, c4 = st.columns(4)
-        days_span = (fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days
-        years_span = max(days_span / 365.25, 0.01)
-        total_ret = fof_cum_nav[-1] - 1
-        ann_ret = (1 + total_ret)**(1/years_span)-1
-        
-        # 使用自定义函数
+        total_ret = fof_cum_nav.iloc[-1] - 1
         mdd = calculate_max_drawdown(fof_daily_returns)
+        days_span = max((fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days, 1)
+        ann_ret = (1 + total_ret)**(365.25/days_span)-1
         vol = fof_daily_returns.std() * np.sqrt(252)
         sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
 
-        c1.metric("累计收益率", f"{total_ret*100:.2f}%")
-        c2.metric("年化收益率", f"{ann_ret*100:.2f}%")
-        c3.metric("最大回撤", f"{mdd*100:.2f}%")
-        c4.metric("夏普比率", f"{sharpe:.2f}")
+        c1.metric("组合累计收益", f"{total_ret*100:.2f}%")
+        c2.metric("组合年化收益", f"{ann_ret*100:.2f}%")
+        c3.metric("组合最大回撤", f"{mdd*100:.2f}%")
+        c4.metric("组合夏普比率", f"{sharpe:.2f}")
 
-        # --- 2. 绘图逻辑 ---
+        # 净值曲线图
         fig = go.Figure()
-
-        for fund in funds:
-            f_ret = period_returns[fund].dropna()
-            if not f_ret.empty:
-                f_cum = (1 + f_ret).cumprod()
-                fig.add_trace(go.Scatter(x=f_cum.index, y=f_cum, name=f'底层-{fund}', 
-                                         line=dict(dash='dot', width=1.2), opacity=0.4, yaxis='y1'))
-
-        fig.add_trace(go.Scatter(x=fof_cum_nav.index, y=fof_cum_nav, name='寻星组合净值', 
-                                 line=dict(color='red', width=3.5), yaxis='y1'))
+        for f in funds:
+            f_cum = (1 + period_returns[f].dropna()).cumprod()
+            fig.add_trace(go.Scatter(x=f_cum.index, y=f_cum, name=f'底层-{f}', line=dict(width=1), opacity=0.3))
+        for b in benchmarks:
+            b_cum = (1 + period_returns[b].dropna()).cumprod()
+            fig.add_trace(go.Scatter(x=b_cum.index, y=b_cum, name=f'基准-{b}', line=dict(dash='dash', width=2)))
+        fig.add_trace(go.Scatter(x=fof_cum_nav.index, y=fof_cum_nav, name='寻星组合', line=dict(color='red', width=4)))
         
-        rolling_max = fof_cum_nav.cummax()
-        dd_series = (fof_cum_nav - rolling_max) / rolling_max
-        fig.add_trace(go.Scatter(x=dd_series.index, y=dd_series, name='组合回撤(右轴)', 
-                                 fill='tozeroy', line=dict(color='rgba(255,0,0,0.1)'), yaxis='y2'))
-
-        fig.update_layout(
-            title=f"寻星组合分析图 (当前频率: {freq_option})",
-            xaxis=dict(title="日期", tickformat="%Y-%m", dtick=dtick_val, tickangle=-45, showgrid=True),
-            yaxis=dict(title="累计净值", side='left'),
-            yaxis2=dict(title="回撤幅度", overlaying='y', side='right', range=[-0.6, 0], tickformat=".0%"),
-            hovermode="x unified", height=600, margin=dict(b=100),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
+        fig.update_layout(title="净值对比曲线", xaxis=dict(dtick=dtick_val, tickformat="%Y-%m"), hovermode="x unified", height=600)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 3. 深度分析表 ---
-        st.markdown("### 🔍 底层产品深度指标分析")
+        # 深度画像 (回撤逻辑修正)
+        st.markdown("### 🔍 深度指标分析 (回撤修复状态穿透)")
         analysis_data = []
-        for fund in funds:
-            f_ret = period_returns[fund].dropna()
-            if f_ret.empty: continue
-            f_cum = (1 + f_ret).cumprod()
-            pos_prob = (f_ret > 0).sum() / len(f_ret)
+        for item in (funds + benchmarks):
+            ret = period_returns[item].dropna()
+            if ret.empty: continue
+            cum = (1 + ret).cumprod()
             
-            window = 52 if len(f_ret) > 60 else 12
-            rolling_ret = f_cum.pct_change(periods=window)
-            win_rate = (rolling_ret > 0).sum() / len(rolling_ret.dropna()) if not rolling_ret.dropna().empty else 0
+            # --- 精准回撤算法 ---
+            dd = (cum - cum.cummax()) / cum.cummax()
+            max_rec, ongoing, is_dd, start_dt = 0, 0, False, None
             
-            f_rolling_max = f_cum.cummax()
-            f_dd = (f_cum - f_rolling_max) / f_rolling_max
-            max_rec, tmp_start = 0, None
-            for date, val in f_dd.items():
-                if val < 0 and tmp_start is None: tmp_start = date
-                elif val == 0 and tmp_start is not None:
-                    max_rec = max(max_rec, (date - tmp_start).days)
-                    tmp_start = None
+            for dt, val in dd.items():
+                if val < -0.0001: # 入水 (万分之一容差)
+                    if not is_dd:
+                        is_dd, start_dt = True, dt
+                else: # 出水
+                    if is_dd:
+                        max_rec = max(max_rec, (dt - start_dt).days)
+                        is_dd, start_dt = False, None
+            
+            if is_dd: # 至今未出水
+                ongoing = (dd.index[-1] - start_dt).days
+            
+            final_days = max(max_rec, ongoing)
+            status = "⚠️未修复" if ongoing >= max_rec and ongoing > 0 else "✅已修复"
             
             analysis_data.append({
-                "产品": fund,
-                "正收益概率(胜率)": f"{pos_prob*100:.1f}%",
-                "持有1年盈利概率": f"{win_rate*100:.1f}%",
-                "最长回撤修复天数": f"{max_rec} 天"
+                "名称": item,
+                "性质": "底层产品" if item in funds else "业绩基准",
+                "本期累计收益": f"{(cum.iloc[-1]-1)*100:.2f}%",
+                "正收益概率": f"{(ret > 0).sum()/len(ret)*100:.1f}%",
+                "最长回撤修复时长": f"{final_days}天",
+                "回撤当前状态": status
             })
         st.table(pd.DataFrame(analysis_data))
 
-        # --- 4. 相关性 ---
-        st.subheader("📊 底层资产相关性")
+        # 相关性
+        st.subheader("📊 资产相关性矩阵")
         st.dataframe(period_returns.corr().style.background_gradient(cmap='RdYlGn').format("{:.2f}"))
-    else:
-        st.warning("所选日期范围内没有足够数据，请调整开始日期。")
 else:
-    st.info("👋 欢迎使用寻星配置分析系统1.0！请上传Excel文件开始。")
+    st.info("👋 请上传包含净值数据及指数(列名含300/500)的Excel。")
