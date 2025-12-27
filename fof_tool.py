@@ -22,6 +22,7 @@ if not st.session_state["authenticated"]:
                 <p style='color: #666;'>内部专用版 | 请输入授权码访问</p>
             </div>
         """, unsafe_allow_html=True)
+        # 这里去掉了原本显示在占位符里的数字
         pwd = st.text_input("", type="password", placeholder="请输入授权码并按回车...")
         if st.button("进入系统", use_container_width=True):
             if pwd == "281699":
@@ -113,7 +114,7 @@ if uploaded_file:
         c1, c2, c3, c4 = st.columns(4)
         days_span = (fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days
         years_span = max(days_span / 365.25, 0.01)
-        total_ret = fof_cum_nav.iloc[-1] - 1
+        total_ret = fof_cum_nav[-1] - 1
         ann_ret = (1 + total_ret)**(1/years_span)-1
         
         # 使用自定义函数
@@ -163,16 +164,30 @@ if uploaded_file:
             f_cum = (1 + f_ret).cumprod()
             pos_prob = (f_ret > 0).sum() / len(f_ret)
             
+            window = 52 if len(f_ret) > 60 else 12
+            rolling_ret = f_cum.pct_change(periods=window)
+            win_rate = (rolling_ret > 0).sum() / len(rolling_ret.dropna()) if not rolling_ret.dropna().empty else 0
+            
+            f_rolling_max = f_cum.cummax()
+            f_dd = (f_cum - f_rolling_max) / f_rolling_max
+            max_rec, tmp_start = 0, None
+            for date, val in f_dd.items():
+                if val < 0 and tmp_start is None: tmp_start = date
+                elif val == 0 and tmp_start is not None:
+                    max_rec = max(max_rec, (date - tmp_start).days)
+                    tmp_start = None
+            
             analysis_data.append({
                 "产品": fund,
-                "正收益周占比": f"{pos_prob*100:.1f}%",
-                "本期累计收益": f"{(f_cum.iloc[-1]-1)*100:.2f}%"
+                "正收益概率(胜率)": f"{pos_prob*100:.1f}%",
+                "持有1年盈利概率": f"{win_rate*100:.1f}%",
+                "最长回撤修复天数": f"{max_rec} 天"
             })
         st.table(pd.DataFrame(analysis_data))
 
         # --- 4. 相关性 ---
         st.subheader("📊 底层资产相关性")
-        st.dataframe(period_returns.corr().round(2))
+        st.dataframe(period_returns.corr().style.background_gradient(cmap='RdYlGn').format("{:.2f}"))
     else:
         st.warning("所选日期范围内没有足够数据，请调整开始日期。")
 else:
