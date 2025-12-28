@@ -17,8 +17,8 @@ if not st.session_state["authenticated"]:
     with col2:
         st.markdown("""
             <div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px; border: 1px solid #dcdfe6;'>
-                <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统 2.4</h2>
-                <p style='color: #666;'>终极自适应双轴 & 布局优化版</p>
+                <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统 2.4.1</h2>
+                <p style='color: #666;'>指标看板修复 & 自适应双轴版</p>
             </div>
         """, unsafe_allow_html=True)
         pwd = st.text_input("", type="password", placeholder="请输入授权码...")
@@ -55,14 +55,14 @@ def analyze_new_high_gap(nav_series):
 # ==========================================
 # 3. 业务主界面
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星 2.4 终极自适应版")
+st.set_page_config(layout="wide", page_title="寻星 2.4.1")
 
 if st.sidebar.button("🔒 退出系统"):
     st.session_state["authenticated"] = False
     st.rerun()
 
-st.title("🏛️ 寻星配置分析系统 2.4")
-st.caption("2025-12-27 更新：自适应坐标轴、右轴收益率刻度、Tab2 垂直布局")
+st.title("🏛️ 寻星配置分析系统 2.4.1")
+st.caption("核心指标看板已修复 | 支持估值表自动清洗对接")
 st.markdown("---")
 
 uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
@@ -89,17 +89,35 @@ if uploaded_file:
     fof_cum_nav = (1 + fof_daily_returns).cumprod()
 
     if not fof_cum_nav.empty:
+        # --- 修复核心：指标计算区域 ---
+        total_ret = fof_cum_nav.iloc[-1] - 1
+        days_diff = (fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days
+        ann_ret = (1 + total_ret)**(365.25/max(days_diff, 1)) - 1
+        mdd = (fof_cum_nav / fof_cum_nav.cummax() - 1).min()
+        vol = fof_daily_returns.std() * np.sqrt(252)
+        sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
+
         # --- 模块化 Tab ---
         tab1, tab2, tab3 = st.tabs(["📈 绩效看板", "📊 收益归因", "🔍 穿透诊断"])
 
         with tab1:
+            # 1. 顶部指标卡片
+            st.markdown("##### 🏛️ FOF组合核心指标")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("年化收益率", f"{ann_ret*100:.2f}%", help="复利年化")
+            c2.metric("最大回撤", f"{mdd*100:.2f}%", help="历史上从最高点跌落的最大幅度")
+            c3.metric("夏普比率", f"{sharpe:.2f}", help="承担每单位风险获得的超额回报")
+            c4.metric("年化波动率", f"{vol*100:.2f}%")
+            
+            st.divider() # 分割线
+
+            # 2. 双轴走势图
             st.subheader("净值走势与累计收益双轴对比")
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             
-            # 记录所有曲线的最大最小值，用于自适应坐标轴
             y1_all_values = [fof_cum_nav.max(), fof_cum_nav.min()]
             
-            # 1. 绘制底层产品 (归一化)
+            # 绘制底层产品
             for fund in funds:
                 f_nav = period_nav[fund].dropna()
                 if not f_nav.empty:
@@ -110,37 +128,31 @@ if uploaded_file:
                         line=dict(width=1.2), opacity=0.4
                     ), secondary_y=False)
             
-            # 2. 绘制 FOF 组合
+            # 绘制 FOF 组合
             fig.add_trace(go.Scatter(
                 x=fof_cum_nav.index, y=fof_cum_nav, name="🏛️ FOF组合", 
                 line=dict(color='red', width=3.8)
             ), secondary_y=False)
             
-            # 3. 动态计算坐标轴范围 (核心修复)
-            y1_max = max(y1_all_values) * 1.08  # 预留8%空间防止冲顶
-            y1_min = min(y1_all_values) * 0.95  # 下方预留5%
-            
-            # 4. 同步计算右轴收益率范围
+            # 自适应坐标轴计算
+            y1_max = max(y1_all_values) * 1.08
+            y1_min = min(y1_all_values) * 0.95
             y2_max = (y1_max - 1) * 100
             y2_min = (y1_min - 1) * 100
 
             fig.update_layout(
-                height=650,
+                height=600,
                 hovermode="x unified",
                 yaxis=dict(title="归一化净值 (起点=1.0)", range=[y1_min, y1_max], side="left", showgrid=True),
                 yaxis2=dict(title="累计收益率 (%)", range=[y2_min, y2_max], side="right", showgrid=False, ticksuffix="%"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig, use_container_width=True)
-            st.info("💡 走势图已自动适配最高净值产品。左轴看净值水位，右轴看累计涨幅。")
 
         with tab2:
-            # 布局优化：上下排列
             st.subheader("📊 资产相关性矩阵")
             st.dataframe(period_returns.corr().round(2).style.background_gradient(cmap='RdYlGn'), use_container_width=True)
-            
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            
+            st.markdown("<br>", unsafe_allow_html=True)
             st.subheader("🎯 资产累计收益贡献")
             contrib = period_returns.fillna(0).multiply(weights_series).sum().sort_values()
             fig_bar = go.Figure(go.Bar(
