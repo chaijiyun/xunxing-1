@@ -15,7 +15,7 @@ if not st.session_state["authenticated"]:
     st.markdown("<br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px;'><h2>🏛️ 寻星投研系统 2.4</h2><p>双轴收益分析版</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px;'><h2>🏛️ 寻星投研系统 2.4</h2><p>双轴对齐与布局优化版</p></div>", unsafe_allow_html=True)
         pwd = st.text_input("", type="password", placeholder="请输入授权码...")
         if st.button("进入系统", use_container_width=True):
             if pwd == "281699":
@@ -26,7 +26,7 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ==========================================
-# 2. 核心算法逻辑 (创新高天数)
+# 2. 核心算法逻辑
 # ==========================================
 def analyze_new_high_gap(nav_series):
     if nav_series.empty or len(nav_series) < 2: 
@@ -46,14 +46,14 @@ def analyze_new_high_gap(nav_series):
 # ==========================================
 # 3. 业务主界面
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星 2.4 双轴版")
+st.set_page_config(layout="wide", page_title="寻星 2.4 终极版")
 
-if st.sidebar.button("🔒 退出系统"):
+if st.sidebar.button("🔒 退出系统并锁定"):
     st.session_state["authenticated"] = False
     st.rerun()
 
 st.title("🏛️ 寻星配置分析系统 2.4")
-st.caption("双轴视图：左轴净值(归一化) vs 右轴累计收益率(%)")
+st.caption("双轴修正与上下布局优化版 | 2025-12-27 更新")
 st.markdown("---")
 
 uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
@@ -81,58 +81,41 @@ if uploaded_file:
 
         with tab1:
             st.subheader("净值走势与累计收益双轴对比")
-            
-            # 创建双轴图表
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             
             # 绘制底层产品
             for fund in funds:
                 f_nav = period_nav[fund].dropna()
                 f_norm = f_nav / f_nav.iloc[0]
-                fig.add_trace(
-                    go.Scatter(x=f_norm.index, y=f_norm, name=fund, line=dict(width=1.2), opacity=0.4),
-                    secondary_y=False
-                )
+                fig.add_trace(go.Scatter(x=f_norm.index, y=f_norm, name=fund, line=dict(width=1.2), opacity=0.4), secondary_y=False)
             
             # 绘制FOF组合
-            fig.add_trace(
-                go.Scatter(x=fof_cum_nav.index, y=fof_cum_nav, name="🏛️ FOF组合", line=dict(color='red', width=3.5)),
-                secondary_y=False
-            )
+            fig.add_trace(go.Scatter(x=fof_cum_nav.index, y=fof_cum_nav, name="🏛️ FOF组合", line=dict(color='red', width=3.5)), secondary_y=False)
             
-            # 配置坐标轴
+            # --- 关键修正：计算右轴范围以匹配左轴 ---
+            y1_min, y1_max = 0.8, max(fof_cum_nav.max(), period_nav.max().max()/period_nav.iloc[0].max()) * 1.05
+            y2_min, y2_max = (y1_min - 1) * 100, (y1_max - 1) * 100
+
             fig.update_layout(
-                height=600,
+                height=650,
                 hovermode="x unified",
-                xaxis=dict(title="日期"),
-                yaxis=dict(title="归一化净值 (起点=1.0)", side="left", showgrid=True),
-                yaxis2=dict(
-                    title="累计收益率 (%)", 
-                    side="right", 
-                    overlaying="y", 
-                    showgrid=False,
-                    # 计算右轴刻度：(左轴值 - 1) * 100
-                    tickmode="auto"
-                ),
+                yaxis=dict(title="归一化净值 (起点=1.0)", range=[y1_min, y1_max], side="left", showgrid=True),
+                yaxis2=dict(title="累计收益率 (%)", range=[y2_min, y2_max], side="right", showgrid=False, ticksuffix="%"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-
-            # 同步右轴的百分比显示效果 (通过重写 tickformat)
-            # 因为双轴联动，右轴 10% 对应左轴 1.1，这里我们通过动态调整显示
             st.plotly_chart(fig, use_container_width=True)
-            st.info("💡 左侧纵轴代表产品从 1.0 起步的净值水位；右侧代表对应的累计增长百分比。")
 
-        # --- Tab 2 & 3 保持之前优秀的逻辑 ---
         with tab2:
-            col_a, col_b = st.columns([1, 1])
-            with col_a:
-                st.subheader("资产相关性矩阵")
-                st.dataframe(period_returns.corr().round(2).style.background_gradient(cmap='RdYlGn'))
-            with col_b:
-                st.subheader("累计收益贡献")
-                contrib = period_returns.fillna(0).multiply(weights_series).sum().sort_values()
-                fig_bar = go.Figure(go.Bar(x=contrib.values, y=contrib.index, orientation='h'))
-                st.plotly_chart(fig_bar, use_container_width=True)
+            # 修改布局为上下显示，避免拥挤
+            st.subheader("📊 资产相关性矩阵")
+            st.dataframe(period_returns.corr().round(2).style.background_gradient(cmap='RdYlGn'), use_container_width=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("🎯 累计收益贡献")
+            contrib = period_returns.fillna(0).multiply(weights_series).sum().sort_values()
+            fig_bar = go.Figure(go.Bar(x=contrib.values, y=contrib.index, orientation='h', marker_color='#1e3a8a'))
+            fig_bar.update_layout(xaxis_tickformat=".2%", height=max(400, len(funds)*40))
+            st.plotly_chart(fig_bar, use_container_width=True)
 
         with tab3:
             selected_f = st.selectbox("选择分析产品", funds)
@@ -143,6 +126,7 @@ if uploaded_file:
             fig_diag.add_trace(go.Scatter(x=f_nav_single.index, y=f_nav_single, name="净值", line=dict(color='#1e3a8a', width=2)))
             fig_diag.add_trace(go.Scatter(x=peaks.index, y=peaks, name="最高水位", line=dict(color='rgba(255,0,0,0.2)', dash='dash')))
             fig_diag.add_trace(go.Scatter(x=high_dates, y=f_nav_single[high_dates], mode='markers', marker=dict(color='red', size=7), name="新高点"))
+            fig_diag.update_layout(height=500)
             st.plotly_chart(fig_diag, use_container_width=True)
             
             summary_list = []
@@ -151,4 +135,4 @@ if uploaded_file:
                 summary_list.append({"产品": f, "最长不创新高天数": f"{mg} 天", "当前状态": st_str})
             st.table(pd.DataFrame(summary_list))
 else:
-    st.info("请上传净值数据 Excel。")
+    st.info("请在左侧上传 Excel 数据开始分析。")
