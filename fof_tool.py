@@ -8,7 +8,7 @@ from datetime import datetime
 # 1. 核心计算引擎
 # ==========================================
 def calculate_metrics(nav, bench=None):
-    """计算全套量化指标（增强了对 NaN 的防护）"""
+    """计算全套量化指标"""
     nav = nav.dropna().ffill()
     if len(nav) < 2:
         return {k: 0.0 for k in ["总收益率", "年化收益", "最大回撤", "夏普比率", "索提诺", "卡玛比率", "波动率", "信息比率"]}
@@ -123,29 +123,36 @@ if uploaded_file:
         mdd_curve = (fof_nav / fof_nav.cummax() - 1)
         st.plotly_chart(go.Figure(go.Scatter(x=mdd_curve.index, y=mdd_curve, fill='tozeroy', line=dict(color="#E74C3C"))), use_container_width=True)
 
-    # --- Tab 3: 底层穿透诊断 (单人诊断 + 多人对比) ---
+    # --- Tab 3: 底层穿透诊断 (指标已移至右边) ---
     with tabs[2]:
         st.subheader("🔍 底层资产深度诊断")
-        diag_col1, diag_col2 = st.columns([1, 3])
-        with diag_col1:
-            target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
-            tn = norm_data[target_f].dropna(); tr = period_data[target_f].dropna()
-            ts = calculate_metrics(tn, bench_nav)
-            st.metric("累计收益", f"{ts['总收益率']:.2%}")
-            st.metric("最大回撤", f"{ts['最大回撤']:.2%}")
-            m_gap, status_str, high_dates = analyze_new_high_gap(tr)
-            st.metric("最长新高间隔", f"{m_gap}天")
-            st.info(f"状态: {status_str}")
-        with diag_col2:
+        target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
+        
+        # 布局调整：图形占3份，指标占1份
+        diag_col_left, diag_col_right = st.columns([3, 1])
+        
+        tn = norm_data[target_f].dropna(); tr = period_data[target_f].dropna()
+        ts = calculate_metrics(tn, bench_nav)
+        m_gap, status_str, high_dates = analyze_new_high_gap(tr)
+
+        with diag_col_left:
             fig_diag = go.Figure()
-            fig_diag.add_trace(go.Scatter(x=tn.index, y=tn, name="净值", line=dict(color='#1e3a8a', width=2.5)))
+            fig_diag.add_trace(go.Scatter(x=tn.index, y=tn, name="归一化净值", line=dict(color='#1e3a8a', width=2.5)))
             fig_diag.add_trace(go.Scatter(x=high_dates, y=tn[high_dates], mode='markers', name="新高时刻", marker=dict(color='red', size=8)))
-            fig_diag.update_layout(height=400, template="plotly_white")
+            fig_diag.update_layout(height=450, template="plotly_white", margin=dict(l=20, r=20, t=20, b=20))
             st.plotly_chart(fig_diag, use_container_width=True)
+            
+        with diag_col_right:
+            st.markdown("#### 📊 诊断量化指标")
+            st.metric("区间累计收益", f"{ts['总收益率']:.2%}")
+            st.metric("区间最大回撤", f"{ts['最大回撤']:.2%}")
+            st.metric("最长新高间隔", f"{m_gap}天")
+            st.metric("年化波动率", f"{ts['波动率']:.2%}")
+            st.info(f"**新高状态**: \n{status_str}")
         
         st.markdown("---")
         st.subheader("⚔️ 配置池横向对比")
-        comp_funds = st.multiselect("挑选对比产品", sel_funds, default=sel_funds)
+        comp_funds = st.multiselect("挑选对比产品 (在此查看多条曲线)", sel_funds, default=sel_funds)
         if comp_funds:
             fig_comp = go.Figure()
             for f in comp_funds:
@@ -153,10 +160,10 @@ if uploaded_file:
             fig_comp.update_layout(height=450, template="plotly_white")
             st.plotly_chart(fig_comp, use_container_width=True)
 
-    # --- Tab 4: 资产配置逻辑 (数字标注 + 上下布局) ---
+    # --- Tab 4: 资产配置逻辑 (上下垂直布局) ---
     with tabs[3]:
         st.subheader("🧩 资产配置逻辑")
-        st.markdown("#### 1. 相关性矩阵 (数值视图)")
+        st.markdown("#### 1. 相关性矩阵 (数值标注)")
         corr = period_data[sel_funds].pct_change().corr()
         fig_corr = go.Figure(data=go.Heatmap(
             z=corr.values, x=corr.columns, y=corr.columns,
@@ -175,7 +182,7 @@ if uploaded_file:
     # --- Tab 5: 报告生成 ---
     with tabs[4]:
         st.subheader("📝 投研报告生成")
-        st.info("报告导出功能已就绪，请点击侧边栏下载 HTML。")
+        st.info("报告导出功能已就绪。")
 
     # --- Tab 6: 实验模拟 ---
     with tabs[5]:
@@ -189,7 +196,7 @@ if uploaded_file:
             for i in range(20): fig_sim.add_trace(go.Scatter(y=sims[:,i], mode='lines', opacity=0.3))
             st.plotly_chart(fig_sim, use_container_width=True)
 
-    # --- Tab 7: 资产池全量对比 (新增：专业表格与多选) ---
+    # --- Tab 7: 资产池全量对比 ---
     with tabs[6]:
         st.header("📊 全资产池深度比较实验室")
         all_comp_list = st.multiselect("挑选对比产品 (支持总库所有产品)", fund_pool, default=fund_pool[:min(5, len(fund_pool))])
