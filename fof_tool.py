@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
 
 # ==========================================
 # 1. 核心指标计算引擎
@@ -57,65 +56,61 @@ def calculate_metrics(nav):
     }
 
 # ==========================================
-# 2. UI 界面与侧边栏控制
+# 2. UI 界面与侧边栏控制 (优化后的逻辑顺序: 成分 -> 权重 -> 时间)
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.17", page_icon="🏛️")
+st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.19", page_icon="🏛️")
 
 st.sidebar.title("🏛️ 寻星控制台")
 uploaded_file = st.sidebar.file_uploader("📂 加载寻星配置底座 (xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # 加载原始数据
+    # 原始数据加载
     df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
     all_cols = df_raw.columns.tolist()
     
-    # --- 【新增：全局日期筛选选项】 ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📅 时间跨度选择")
-    min_date = df_raw.index.min().to_pydatetime()
-    max_date = df_raw.index.max().to_pydatetime()
-    
-    start_date = st.sidebar.date_input("起始日期", min_date, min_value=min_date, max_value=max_date)
-    end_date = st.sidebar.date_input("截止日期", max_date, min_value=min_date, max_value=max_date)
-    
-    # 立即对原始数据进行全局切片
-    df_db = df_raw.loc[start_date:end_date].copy()
-    
-    if df_db.empty:
-        st.error("所选日期范围内没有数据，请重新选择。")
-        st.stop()
-    
-    # 业绩基准选择
+    # 1. 业绩基准
     st.sidebar.markdown("---")
     default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
     sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
     
-    # 构建寻星配置组合
+    # 2. 构建寻星配置组合 (我们要投什么)
     fund_pool = [c for c in all_cols if c != sel_bench]
     st.sidebar.subheader("🛠️ 构建寻星配置组合")
     sel_funds = st.sidebar.multiselect("挑选组合成分", fund_pool, default=[])
     
-    # 权重与合成
+    # 3. 比例分配 (具体分配比例)
     weights = {}
-    star_nav = None
     if sel_funds:
         st.sidebar.markdown("#### ⚖️ 比例分配")
         avg_w = 1.0 / len(sel_funds)
         for f in sel_funds:
             weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
-        
-        # 计算组合
+    
+    # 4. 时间跨度选择 (最后看什么时间段)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📅 时间跨度选择")
+    min_date = df_raw.index.min().to_pydatetime()
+    max_date = df_raw.index.max().to_pydatetime()
+    start_date = st.sidebar.date_input("起始日期", min_date, min_value=min_date, max_value=max_date)
+    end_date = st.sidebar.date_input("截止日期", max_date, min_value=min_date, max_value=max_date)
+    
+    # 全局数据切片
+    df_db = df_raw.loc[start_date:end_date].copy()
+    
+    # 组合计算逻辑
+    star_nav = None
+    if sel_funds and not df_db.empty:
         df_port = df_db[sel_funds].dropna()
         if not df_port.empty:
             port_rets = df_port.pct_change().fillna(0)
-            norm_w = pd.Series(weights) / sum(weights.values())
+            norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
             star_rets = (port_rets * norm_w).sum(axis=1)
             star_nav = (1 + star_rets).cumprod()
             star_nav.name = "寻星配置组合"
-            # 基准同步归一化
+            # 基准同步
             bench_sync = df_db.loc[star_nav.index, sel_bench]
-            bench_norm = bench_sync / bench_sync.iloc[0]
+            bench_norm = bench_sync / (bench_sync.iloc[0] if not bench_sync.empty else 1)
 
     # ==========================================
     # 3. 功能标签页
@@ -125,7 +120,7 @@ if uploaded_file:
     # --- Tab 1: 组合全景图 ---
     with tabs[0]:
         if star_nav is not None:
-            st.subheader(f"📊 寻星配置组合表现 ({start_date} 至 {end_date})")
+            st.subheader(f"📊 寻星配置组合全景图 ({start_date} 至 {end_date})")
             m = calculate_metrics(star_nav)
             c1, c2, c3, c4, c5, c6 = st.columns(6)
             c1.metric("区间收益率", f"{m['总收益率']:.2%}")
@@ -133,20 +128,20 @@ if uploaded_file:
             c3.metric("区间最大回撤", f"{m['最大回撤']:.2%}")
             c4.metric("夏普比率", f"{m['夏普比率']:.2f}")
             c5.metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-            c6.metric("回撤修复天数", m['回撤修复天数'])
+            c6.metric("修复天数", m['回撤修复天数'])
             
             fig_main = go.Figure()
             fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='#1E40AF', width=3.5)))
             fig_main.add_trace(go.Scatter(x=bench_norm.index, y=bench_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
-            fig_main.update_layout(template="plotly_white", hovermode="x unified", height=500, title="资产配置组合模拟运行净值")
+            fig_main.update_layout(template="plotly_white", hovermode="x unified", height=550, title="资产配置组合模拟运行净值")
             st.plotly_chart(fig_main, use_container_width=True)
         else:
-            st.info("👈 请先在左侧侧边栏【挑选组合成分】。")
+            st.info("👈 请先在左侧侧边栏【挑选组合成分】并根据需要调整比例。")
 
     # --- Tab 2: 底层产品分析 ---
     with tabs[1]:
         if sel_funds:
-            st.subheader("🔬 组合成分深度拆解 (所选区间)")
+            st.subheader("🔬 寻星配置底层产品分析 (所选区间)")
             df_sub = df_db[sel_funds].dropna()
             if not df_sub.empty:
                 df_sub_norm = df_sub.div(df_sub.iloc[0])
@@ -154,7 +149,7 @@ if uploaded_file:
                 st.plotly_chart(fig_sub, use_container_width=True)
                 
                 corr = df_sub.pct_change().corr()
-                st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r', title="成分相关性矩阵"), use_container_width=True)
+                st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r', title="相关性热力图"), use_container_width=True)
         else:
             st.info("👈 请先在左侧勾选成分产品。")
 
@@ -166,35 +161,27 @@ if uploaded_file:
                 fig_pie = px.pie(names=list(weights.keys()), values=list(weights.values()), hole=0.4, title="当前组合权重分布")
                 st.plotly_chart(fig_pie, use_container_width=True)
             with cw2:
-                st.write("##### 权重明细表")
+                st.write("##### 权重明细")
                 st.table(pd.DataFrame.from_dict(weights, orient='index', columns=['所占比例']).style.format("{:.2%}"))
         else:
             st.info("👈 请先在左侧勾选成分产品。")
 
-    # --- Tab 4: 配置池产品分析 (核心升级模块) ---
+    # --- Tab 4: 配置池产品分析 ---
     with tabs[3]:
-        st.subheader("⚔️ 配置池单品/多品对比 (所选区间)")
-        st.markdown(f"💡 当前对比区间：**{start_date}** 至 **{end_date}**")
+        st.subheader("⚔️ 配置池产品分析 (独立对比模块)")
+        st.markdown(f"💡 当前观察区间：**{start_date}** 至 **{end_date}**")
         
-        compare_pool = st.multiselect("请搜索并勾选池内产品", all_cols, default=[])
+        compare_pool = st.multiselect("搜索并勾选池内产品", all_cols, default=[])
         
         if compare_pool:
             df_comp_raw = df_db[compare_pool].dropna()
             if not df_comp_raw.empty:
-                # 核心逻辑：比武场专用归一化
                 df_comp_norm = df_comp_raw.div(df_comp_raw.iloc[0])
-                fig_c = px.line(df_comp_norm, title=f"产品走势对比 (起点归一化)")
+                fig_c = px.line(df_comp_norm, title="产品业绩对比走势 (起点归一化)")
                 fig_c.update_layout(yaxis_title="归一化净值 (起点=1.0)", template="plotly_white", hovermode="x unified", height=600)
                 st.plotly_chart(fig_c, use_container_width=True)
                 
-                # 核心绩效战报
-                st.markdown("##### 🏆 核心素质PK战报 (基于所选区间)")
-                res_list = []
-                for col in compare_pool:
-                    m_p = calculate_metrics(df_comp_raw[col])
-                    m_p['产品名称'] = col
-                    res_list.append(m_p)
-                
+                res_list = [dict(calculate_metrics(df_comp_raw[col]), **{"产品名称": col}) for col in compare_pool]
                 res_df = pd.DataFrame(res_list).set_index('产品名称')
                 st.dataframe(
                     res_df.style.format({
@@ -205,9 +192,9 @@ if uploaded_file:
                     use_container_width=True
                 )
             else:
-                st.warning("⚠️ 选中的产品在当前日期范围内没有完整数据，无法对比。请尝试调整左侧日期。")
+                st.warning("⚠️ 选定区间内数据不足，请调整日期。")
         else:
-            st.info("🔎 请在此处勾选产品以展示其在选定区间内的业绩数据。")
+            st.info("🔎 请在此处勾选产品以展示其业绩数据。")
 
 else:
-    st.info("👋 请在左侧上传‘寻星配置底座’文件。")
+    st.info("👋 请在左侧上传‘寻星配置底座’Excel文件以启动分析。")
