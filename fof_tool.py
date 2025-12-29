@@ -5,33 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
-# 1. 身份验证逻辑 (密码: 281699)
-# ==========================================
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-if not st.session_state["authenticated"]:
-    st.set_page_config(page_title="身份验证", page_icon="🔐")
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("""
-            <div style='text-align: center; background-color: #f0f2f6; padding: 30px; border-radius: 10px; border: 1px solid #dcdfe6;'>
-                <h2 style='color: #1e3a8a;'>🏛️ 寻星投研系统 2.4.1</h2>
-                <p style='color: #666;'>指标看板修复 & 自适应双轴版</p>
-            </div>
-        """, unsafe_allow_html=True)
-        pwd = st.text_input("", type="password", placeholder="请输入授权码...")
-        if st.button("进入系统", use_container_width=True):
-            if pwd == "281699":
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("密码错误")
-    st.stop()
-
-# ==========================================
-# 2. 核心算法逻辑
+# 1. 核心算法逻辑
 # ==========================================
 def analyze_new_high_gap(nav_series):
     """计算创新高间隔及当前状态"""
@@ -49,37 +23,31 @@ def analyze_new_high_gap(nav_series):
         max_historical_gap = (nav_series.index[-1] - nav_series.index[0]).days
     
     current_gap = (nav_series.index[-1] - new_high_dates[-1]).days
-    status = f"⚠️ 持续 {current_gap} 天" if current_gap > 7 else "✅ 处于新高附近"
+    status = f"⚠️ 已持续 {current_gap} 天" if current_gap > 7 else "✅ 处于新高附近"
     return max(max_historical_gap, current_gap), current_gap, status, new_high_dates, peak_series
 
 # ==========================================
-# 3. 业务主界面
+# 2. 界面配置
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星 2.4.1")
+st.set_page_config(layout="wide", page_title="寻星 2.4.2", page_icon="🏛️")
 
-if st.sidebar.button("🔒 退出系统"):
-    st.session_state["authenticated"] = False
-    st.rerun()
+st.title("🏛️ 寻星配置分析系统 2.4.2")
+st.caption("2025-12-28 更新：新增底层产品全集成看板 | 修复总收益率指标")
 
-st.title("🏛️ 寻星配置分析系统 2.4.1")
-st.caption("核心指标看板已修复 | 支持估值表自动清洗对接")
-st.markdown("---")
-
-uploaded_file = st.sidebar.file_uploader("1. 上传净值数据 (Excel)", type=["xlsx"])
+uploaded_file = st.sidebar.file_uploader("1. 上传清洗后的数据库", type=["xlsx"])
 
 if uploaded_file:
-    # 加载数据并排序
     raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).dropna(how='all').sort_index()
     
-    st.sidebar.subheader("2. 时间与配置")
-    s_date = st.sidebar.date_input("开始日期", value=raw_df.index.min())
-    e_date = st.sidebar.date_input("结束日期", value=raw_df.index.max())
+    st.sidebar.subheader("2. 配置参数")
+    s_date = st.sidebar.date_input("分析起点", value=raw_df.index.min())
+    e_date = st.sidebar.date_input("分析终点", value=raw_df.index.max())
     
     period_nav = raw_df.loc[s_date:e_date]
     period_returns = period_nav.pct_change()
     funds = period_nav.columns.tolist()
     
-    # 权重设定
+    # 权重配置
     target_weights = {f: st.sidebar.slider(f, 0.0, 1.0, 1.0/len(funds)) for f in funds}
     tw_total = sum(target_weights.values()) or 1
     weights_series = pd.Series({k: v / tw_total for k, v in target_weights.items()})
@@ -89,99 +57,99 @@ if uploaded_file:
     fof_cum_nav = (1 + fof_daily_returns).cumprod()
 
     if not fof_cum_nav.empty:
-        # --- 修复核心：指标计算区域 ---
-        total_ret = fof_cum_nav.iloc[-1] - 1
+        # --- 核心数据准备 ---
+        total_ret = fof_cum_nav.iloc[-1] - 1  # 改进1：总收益率
         days_diff = (fof_cum_nav.index[-1] - fof_cum_nav.index[0]).days
         ann_ret = (1 + total_ret)**(365.25/max(days_diff, 1)) - 1
         mdd = (fof_cum_nav / fof_cum_nav.cummax() - 1).min()
         vol = fof_daily_returns.std() * np.sqrt(252)
         sharpe = (ann_ret - 0.02) / vol if vol != 0 else 0
 
-        # --- 模块化 Tab ---
-        tab1, tab2, tab3 = st.tabs(["📈 绩效看板", "📊 收益归因", "🔍 穿透诊断"])
+        tab1, tab2, tab3 = st.tabs(["📈 FOF绩效看板", "🔍 底层产品全集成分析", "📊 资产相关性"])
 
+        # --- TAB 1: FOF绩效看板 ---
         with tab1:
-            # 1. 顶部指标卡片
-            st.markdown("##### 🏛️ FOF组合核心指标")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("年化收益率", f"{ann_ret*100:.2f}%", help="复利年化")
-            c2.metric("最大回撤", f"{mdd*100:.2f}%", help="历史上从最高点跌落的最大幅度")
-            c3.metric("夏普比率", f"{sharpe:.2f}", help="承担每单位风险获得的超额回报")
+            st.markdown("##### 🏛️ FOF组合核心表现")
+            c0, c1, c2, c3, c4 = st.columns(5)
+            c0.metric("累计总收益", f"{total_ret*100:.2f}%", help="分析期内总回报")
+            c1.metric("年化收益率", f"{ann_ret*100:.2f}%")
+            c2.metric("最大回撤", f"{mdd*100:.2f}%")
+            c3.metric("夏普比率", f"{sharpe:.2f}")
             c4.metric("年化波动率", f"{vol*100:.2f}%")
             
-            st.divider() # 分割线
+            st.divider()
 
-            # 2. 双轴走势图
-            st.subheader("净值走势与累计收益双轴对比")
             fig = make_subplots(specs=[[{"secondary_y": True}]])
+            y1_all = [fof_cum_nav.max(), fof_cum_nav.min()]
             
-            y1_all_values = [fof_cum_nav.max(), fof_cum_nav.min()]
-            
-            # 绘制底层产品
             for fund in funds:
-                f_nav = period_nav[fund].dropna()
-                if not f_nav.empty:
-                    f_norm = f_nav / f_nav.iloc[0]
-                    y1_all_values.extend([f_norm.max(), f_norm.min()])
-                    fig.add_trace(go.Scatter(
-                        x=f_norm.index, y=f_norm, name=fund, 
-                        line=dict(width=1.2), opacity=0.4
-                    ), secondary_y=False)
+                f_norm = period_nav[fund].dropna() / period_nav[fund].dropna().iloc[0]
+                y1_all.extend([f_norm.max(), f_norm.min()])
+                fig.add_trace(go.Scatter(x=f_norm.index, y=f_norm, name=fund, line=dict(width=1), opacity=0.3), secondary_y=False)
             
-            # 绘制 FOF 组合
-            fig.add_trace(go.Scatter(
-                x=fof_cum_nav.index, y=fof_cum_nav, name="🏛️ FOF组合", 
-                line=dict(color='red', width=3.8)
-            ), secondary_y=False)
+            fig.add_trace(go.Scatter(x=fof_cum_nav.index, y=fof_cum_nav, name="🏛️ FOF组合", line=dict(color='red', width=4)), secondary_y=False)
             
-            # 自适应坐标轴计算
-            y1_max = max(y1_all_values) * 1.08
-            y1_min = min(y1_all_values) * 0.95
-            y2_max = (y1_max - 1) * 100
-            y2_min = (y1_min - 1) * 100
-
-            fig.update_layout(
-                height=600,
-                hovermode="x unified",
-                yaxis=dict(title="归一化净值 (起点=1.0)", range=[y1_min, y1_max], side="left", showgrid=True),
-                yaxis2=dict(title="累计收益率 (%)", range=[y2_min, y2_max], side="right", showgrid=False, ticksuffix="%"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
+            y1_max = max(y1_all) * 1.05
+            y1_min = min(y1_all) * 0.98
+            fig.update_layout(height=600, hovermode="x unified",
+                              yaxis=dict(title="净值水位", range=[y1_min, y1_max]),
+                              yaxis2=dict(title="累计涨幅", range=[(y1_min-1)*100, (y1_max-1)*100], ticksuffix="%"),
+                              legend=dict(orientation="h", y=1.05))
             st.plotly_chart(fig, use_container_width=True)
 
+        # --- TAB 2: 底层产品集成分析 (改进2) ---
         with tab2:
-            st.subheader("📊 资产相关性矩阵")
-            st.dataframe(period_returns.corr().round(2).style.background_gradient(cmap='RdYlGn'), use_container_width=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("🎯 资产累计收益贡献")
-            contrib = period_returns.fillna(0).multiply(weights_series).sum().sort_values()
-            fig_bar = go.Figure(go.Bar(
-                x=contrib.values, y=contrib.index, 
-                orientation='h', marker_color='#1e3a8a'
-            ))
-            fig_bar.update_layout(xaxis_tickformat=".2%", height=max(400, len(funds)*40))
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-        with tab3:
-            st.subheader("🔍 底层产品“路径穿透”诊断")
-            selected_f = st.selectbox("切换分析产品", funds)
-            f_nav_single = period_nav[selected_f].dropna()
+            st.subheader("🔍 底层产品深度穿透")
+            selected_f = st.selectbox("🎯 选择要穿透分析的底层产品", funds)
             
-            max_g, curr_g, status, high_dates, peaks = analyze_new_high_gap(f_nav_single)
+            # 数据切片
+            f_nav_raw = period_nav[selected_f].dropna()
+            f_norm = f_nav_raw / f_nav_raw.iloc[0]
+            f_ret = f_nav_raw.pct_change()
+            
+            # 指标计算
+            f_total_ret = f_norm.iloc[-1] - 1
+            f_mdd = (f_norm / f_norm.cummax() - 1).min()
+            f_vol = f_ret.std() * np.sqrt(252)
+            f_contrib = (f_ret.fillna(0) * weights_series[selected_f]).sum()
+            
+            # 第一行：基础指标
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("累计总收益", f"{f_total_ret*100:.2f}%")
+            m2.metric("最大回撤", f"{f_mdd*100:.2f}%")
+            m3.metric("年化波动率", f"{f_vol*100:.2f}%")
+            m4.metric("对组合总收益贡献", f"{f_contrib*100:.2f}%", help="该产品在持仓期间为FOF带来的点数贡献")
+            
+            # 第二行：走势与路径诊断
+            st.markdown("---")
+            max_g, curr_g, status, high_dates, peaks = analyze_new_high_gap(f_nav_raw)
             
             fig_diag = go.Figure()
-            fig_diag.add_trace(go.Scatter(x=f_nav_single.index, y=f_nav_single, name="实际净值", line=dict(color='#1e3a8a', width=2.5)))
-            fig_diag.add_trace(go.Scatter(x=peaks.index, y=peaks, name="最高水位线", line=dict(color='rgba(255,0,0,0.2)', dash='dash')))
-            fig_diag.add_trace(go.Scatter(x=high_dates, y=f_nav_single[high_dates], mode='markers', marker=dict(color='red', size=8), name="创新高时刻"))
+            fig_diag.add_trace(go.Scatter(x=f_nav_raw.index, y=f_nav_raw, name="产品原值走势", line=dict(color='#1e3a8a', width=2)))
+            fig_diag.add_trace(go.Scatter(x=peaks.index, y=peaks, name="水位线", line=dict(color='rgba(200,200,200,0.5)', dash='dash')))
+            fig_diag.add_trace(go.Scatter(x=high_dates, y=f_nav_raw[high_dates], mode='markers', marker=dict(color='red', size=7), name="创新高时刻"))
             
-            fig_diag.update_layout(title=f"{selected_f} - 历史最长无新高间隔: {max_g} 天", height=500, hovermode="x unified")
+            fig_diag.update_layout(title=f"路径分析：历史最长无新高间隔 {max_g} 天 | 当前状态：{status}", height=450)
             st.plotly_chart(fig_diag, use_container_width=True)
             
-            summary_list = []
-            for f in funds:
-                mg, cg, st_str, _, _ = analyze_new_high_gap(period_nav[f].dropna())
-                summary_list.append({"产品": f, "历史最长无新高天数": f"{mg} 天", "当前状态": st_str})
-            st.table(pd.DataFrame(summary_list))
+            # 第三行：年度/季度分析 (额外赠送)
+            st.markdown("##### 📅 年度收益表现")
+            yearly_ret = f_ret.resample('YE').apply(lambda x: (1+x).prod()-1)
+            y_cols = st.columns(len(yearly_ret))
+            for i, (year, val) in enumerate(yearly_ret.items()):
+                y_cols[i].metric(f"{year.year}年", f"{val*100:.2f}%")
+
+        # --- TAB 3: 相关性分析 ---
+        with tab3:
+            st.subheader("📊 资产相关性矩阵")
+            st.dataframe(period_returns.corr().round(2).style.background_gradient(cmap='RdYlGn'), use_container_width=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("🎯 各产品对FOF组合的贡献排行")
+            contrib = period_returns.fillna(0).multiply(weights_series).sum().sort_values()
+            fig_bar = go.Figure(go.Bar(x=contrib.values, y=contrib.index, orientation='h', marker_color='#1e3a8a'))
+            fig_bar.update_layout(xaxis_tickformat=".2%", height=500)
+            st.plotly_chart(fig_bar, use_container_width=True)
 
 else:
-    st.info("👋 系统就绪。请上传 Excel 净值表开始深度分析。")
+    st.info("👋 请上传由脚本生成的 '寻星底层数据库.xlsx' 开始分析。")
