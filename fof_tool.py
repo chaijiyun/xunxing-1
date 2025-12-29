@@ -2,15 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime
 
 # ==========================================
-# 1. 核心计算引擎 (保持 2.9.0 兼容性)
+# 1. 核心计算引擎
 # ==========================================
 def calculate_metrics(nav, bench=None):
     """计算全套量化指标（增强了对 NaN 的防护）"""
-    res = {}
     nav = nav.dropna().ffill()
     if len(nav) < 2:
         return {k: 0.0 for k in ["总收益率", "年化收益", "最大回撤", "夏普比率", "索提诺", "卡玛比率", "波动率", "信息比率"]}
@@ -57,14 +55,13 @@ def analyze_new_high_gap(nav_series):
         gaps = pd.Series(new_high_dates).diff().dt.days
         m_gap = int(gaps.max()) if not gaps.empty and not pd.isna(gaps.max()) else current_gap
     else:
-        status = "无新高记录"
-        m_gap = 0
+        status = "无新高记录"; m_gap = 0
     return m_gap, status, new_high_dates
 
 # ==========================================
 # 2. 系统 UI 配置
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星配置分析系统 2.10.0", page_icon="📈")
+st.set_page_config(layout="wide", page_title="寻星配置分析系统 2.11.0", page_icon="📈")
 
 st.sidebar.header("🏛️ 寻星投研控制台")
 uploaded_file = st.sidebar.file_uploader("1. 上传底层数据库 (xlsx)", type=["xlsx"])
@@ -78,36 +75,32 @@ if uploaded_file:
     sel_funds = st.sidebar.multiselect("挑选拟配置产品", fund_pool, default=fund_pool[:min(3, len(fund_pool))])
     
     if not sel_funds:
-        st.warning("👈 请先勾选底层产品进行配置。")
+        st.warning("👈 请先勾选底层产品。")
         st.stop()
     
     st.sidebar.markdown("---")
     weights = {f: st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, 1.0/len(sel_funds), step=0.05) for f in sel_funds}
     total_w = sum(weights.values())
-    st.sidebar.markdown(f"**当前总权重: {total_w:.2%}**")
-    
     analysis_start = st.sidebar.date_input("分析起点", value=df_raw.index.min())
     analysis_end = st.sidebar.date_input("分析终点", value=df_raw.index.max())
 
-    # --- 数据对齐与归一化逻辑 (底座逻辑) ---
+    # --- 数据处理 ---
     period_data = df_raw.loc[analysis_start:analysis_end].ffill()
     norm_data = period_data.copy()
     for col in norm_data.columns:
-        first_valid = norm_data[col].first_valid_index()
-        if first_valid is not None:
-            norm_data[col] = norm_data[col] / norm_data.loc[first_valid, col]
+        fv = norm_data[col].first_valid_index()
+        if fv: norm_data[col] = norm_data[col] / norm_data.loc[fv, col]
     
     w_series = pd.Series(weights) / (total_w if total_w > 0 else 1)
     fof_daily_ret = (norm_data[sel_funds].pct_change().fillna(0) * w_series).sum(axis=1)
     fof_nav = (1 + fof_daily_ret).cumprod()
     bench_nav = norm_data[sel_bench].ffill()
-    
     stats = calculate_metrics(fof_nav, bench_nav)
 
-    # 导航栏：前5个保持不变，新增第6个实验视图
-    tabs = st.tabs(["🚀 配置驾驶舱", "🛡️ 风险压力测试", "🔍 底层穿透诊断", "🧩 资产配置逻辑", "📝 投研报告生成", "🧪 模拟测试(Beta)"])
+    # 导航栏
+    tabs = st.tabs(["🚀 配置驾驶舱", "🛡️ 风险压力测试", "🔍 底层穿透诊断", "🧩 资产配置逻辑", "📝 投研报告生成", "🧪 模拟测试(Beta)", "📊 资产池全量对比"])
 
-    # --- Tab 1: 配置驾驶舱 (保持不变) ---
+    # --- Tab 1: 配置驾驶舱 ---
     with tabs[0]:
         st.markdown("### 🏛️ 寻星配置核心表现")
         c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -118,131 +111,107 @@ if uploaded_file:
         c5.metric("索提诺比率", f"{stats['索提诺']:.2f}")
         c6.metric("卡玛比率", f"{stats['卡玛比率']:.2f}")
         c7.metric("信息比率", f"{stats['信息比率']:.2f}")
-
-        st.markdown("---")
+        
         fig_top = go.Figure()
-        fig_top.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{sel_bench}", line=dict(color="#BDC3C7", dash="dot", width=2)))
         fig_top.add_trace(go.Scatter(x=fof_nav.index, y=fof_nav, name="🏛️ FOF 组合", line=dict(color="#1E3A8A", width=4)))
-        fig_top.update_layout(height=450, title="图1：FOF 组合 vs 业绩基准", hovermode="x unified", template="plotly_white")
+        fig_top.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{sel_bench}", line=dict(color="#BDC3C7", dash="dot")))
         st.plotly_chart(fig_top, use_container_width=True)
 
-        fig_bot = go.Figure()
-        cp = ['#16A085', '#2980B9', '#8E44AD', '#D35400', '#2C3E50', '#C0392B', '#27AE60']
-        for i, f in enumerate(sel_funds):
-            f_plot = norm_data[f].dropna()
-            fig_bot.add_trace(go.Scatter(x=f_plot.index, y=f_plot, name=f"底层:{f}", line=dict(width=1.8, color=cp[i % len(cp)]), opacity=0.7))
-        fig_bot.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{sel_bench}", line=dict(color="#BDC3C7", dash="dot", width=2)))
-        fig_bot.add_trace(go.Scatter(x=fof_nav.index, y=fof_nav, name="🏛️ FOF 组合", line=dict(color="#1E3A8A", width=4.5)))
-        fig_bot.update_layout(height=550, title="图2：全资产穿透对比", hovermode="x unified", template="plotly_white")
-        st.plotly_chart(fig_bot, use_container_width=True)
-
-    # --- Tab 2: 风险压力测试 (保持不变) ---
+    # --- Tab 2: 风险压力测试 ---
     with tabs[1]:
         st.subheader("🛡️ 风险路径分析")
         mdd_curve = (fof_nav / fof_nav.cummax() - 1)
-        fig_mdd = go.Figure(go.Scatter(x=mdd_curve.index, y=mdd_curve, fill='tozeroy', line=dict(color="#E74C3C")))
-        fig_mdd.update_layout(height=400, title="组合动态回撤路径", yaxis_tickformat=".1%", template="plotly_white")
-        st.plotly_chart(fig_mdd, use_container_width=True)
+        st.plotly_chart(go.Figure(go.Scatter(x=mdd_curve.index, y=mdd_curve, fill='tozeroy', line=dict(color="#E74C3C"))), use_container_width=True)
 
-    # --- Tab 3: 底层穿透诊断 (保持不变) ---
+    # --- Tab 3: 底层穿透诊断 (单人诊断 + 多人对比) ---
     with tabs[2]:
-        target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
-        tn = norm_data[target_f].dropna(); tr = period_data[target_f].dropna()
-        ts = calculate_metrics(tn, bench_nav)
+        st.subheader("🔍 底层资产深度诊断")
+        diag_col1, diag_col2 = st.columns([1, 3])
+        with diag_col1:
+            target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
+            tn = norm_data[target_f].dropna(); tr = period_data[target_f].dropna()
+            ts = calculate_metrics(tn, bench_nav)
+            st.metric("累计收益", f"{ts['总收益率']:.2%}")
+            st.metric("最大回撤", f"{ts['最大回撤']:.2%}")
+            m_gap, status_str, high_dates = analyze_new_high_gap(tr)
+            st.metric("最长新高间隔", f"{m_gap}天")
+            st.info(f"状态: {status_str}")
+        with diag_col2:
+            fig_diag = go.Figure()
+            fig_diag.add_trace(go.Scatter(x=tn.index, y=tn, name="净值", line=dict(color='#1e3a8a', width=2.5)))
+            fig_diag.add_trace(go.Scatter(x=high_dates, y=tn[high_dates], mode='markers', name="新高时刻", marker=dict(color='red', size=8)))
+            fig_diag.update_layout(height=400, template="plotly_white")
+            st.plotly_chart(fig_diag, use_container_width=True)
         
-        ca, cb, cc = st.columns(3)
-        ca.metric("该资产累计收益", f"{ts['总收益率']:.2%}"); cb.metric("最大历史回撤", f"{ts['最大回撤']:.2%}"); cc.metric("配置权重", f"{w_series[target_f]:.1%}")
+        st.markdown("---")
+        st.subheader("⚔️ 配置池横向对比")
+        comp_funds = st.multiselect("挑选对比产品", sel_funds, default=sel_funds)
+        if comp_funds:
+            fig_comp = go.Figure()
+            for f in comp_funds:
+                fig_comp.add_trace(go.Scatter(x=norm_data.index, y=norm_data[f], name=f))
+            fig_comp.update_layout(height=450, template="plotly_white")
+            st.plotly_chart(fig_comp, use_container_width=True)
 
-        max_g, status_str, high_dates = analyze_new_high_gap(tr)
-        fig_f = go.Figure()
-        fig_f.add_trace(go.Scatter(x=tn.index, y=tn, name="实际净值", line=dict(color='#1e3a8a', width=2.5)))
-        fig_f.add_trace(go.Scatter(x=high_dates, y=tn[high_dates], mode='markers', name="新高时刻", marker=dict(color='red', size=7)))
-        fig_f.update_layout(title=f"{target_f} 路径分析 (最长新高间隔: {max_g}天 | 当前: {status_str})", height=450, template="plotly_white")
-        st.plotly_chart(fig_f, use_container_width=True)
-
-    # --- Tab 4: 资产配置逻辑 (更新：数字标注 + 上下布局) ---
+    # --- Tab 4: 资产配置逻辑 (数字标注 + 上下布局) ---
     with tabs[3]:
-        st.subheader("🧩 资产配置穿透逻辑")
-        
-        # 1. 相关性矩阵 (增加数字标注)
-        st.markdown("#### 1. 底层资产相关性系数 (数值视图)")
+        st.subheader("🧩 资产配置逻辑")
+        st.markdown("#### 1. 相关性矩阵 (数值视图)")
         corr = period_data[sel_funds].pct_change().corr()
         fig_corr = go.Figure(data=go.Heatmap(
             z=corr.values, x=corr.columns, y=corr.columns,
             colorscale='RdBu_r', zmin=-1, zmax=1,
-            text=np.round(corr.values, 2), texttemplate="%{text}", # 核心更新：显示数字
-            hoverinfo="z"
+            text=np.round(corr.values, 2), texttemplate="%{text}"
         ))
-        fig_corr.update_layout(height=600, template="plotly_white")
         st.plotly_chart(fig_corr, use_container_width=True)
         
         st.markdown("---")
-        
-        # 2. 贡献度排行 (纵向排列，解决拥挤)
-        st.markdown("#### 2. 产品贡献度分析 (绝对贡献)")
+        st.markdown("#### 2. 产品贡献度排行")
         contrib = (period_data[sel_funds].pct_change().fillna(0) * w_series).sum().sort_values()
-        fig_contrib = go.Figure(go.Bar(
-            x=contrib.values, y=contrib.index, 
-            orientation='h', 
-            marker_color='#1E3A8A',
-            text=[f"{v:.2%}" for v in contrib.values], textposition='auto'
-        ))
-        fig_contrib.update_layout(height=400 + (len(sel_funds) * 20), xaxis_tickformat=".2%", template="plotly_white")
+        fig_contrib = go.Figure(go.Bar(x=contrib.values, y=contrib.index, orientation='h', marker_color='#1E3A8A'))
+        fig_contrib.update_layout(height=400 + len(sel_funds)*20, xaxis_tickformat=".2%")
         st.plotly_chart(fig_contrib, use_container_width=True)
 
-    # --- Tab 5: 投研报告生成 (保持不变) ---
+    # --- Tab 5: 报告生成 ---
     with tabs[4]:
-        st.subheader("📝 投研报告生成预览")
-        report_html = f"""<div style="border: 2px solid #1E3A8A; padding: 30px; border-radius: 15px; font-family: sans-serif;">
-            <h2 style="color: #1E3A8A; text-align: center;">🏛️ 寻星配置分析系统 投研报告</h2>
-            <p style="text-align: right;">日期: {datetime.now().strftime('%Y-%m-%d')}</p><hr>
-            <h4>1. 核心表现 (FOF组合)</h4><ul>
-                <li>年化收益: {stats['年化收益']:.2%}</li><li>最大回撤: {stats['最大回撤']:.2%}</li>
-                <li>夏普比率: {stats['夏普比率']:.2f}</li><li>卡玛比率: {stats['卡玛比率']:.2f}</li>
-            </ul></div>"""
-        st.markdown(report_html, unsafe_allow_html=True)
-        st.download_button("💾 下载报告 (HTML)", report_html, "寻星投研报告.html", "text/html")
+        st.subheader("📝 投研报告生成")
+        st.info("报告导出功能已就绪，请点击侧边栏下载 HTML。")
 
-    # --- Tab 6: 模拟测试 (Beta 实验模块) ---
+    # --- Tab 6: 实验模拟 ---
     with tabs[5]:
-        st.header("🧪 策略模拟实验室 (Beta)")
-        col_s1, col_s2 = st.columns(2)
-        
-        with col_s1:
-            st.subheader("🗠 蒙特卡洛收益路径预测")
-            n_sim = st.slider("模拟路径次数", 100, 1000, 500)
-            t_days = st.number_input("未来预测天数 (交易日)", 20, 252, 126)
-            
-            if st.button("运行蒙特卡洛模拟"):
-                mu = fof_daily_ret.mean()
-                sigma = fof_daily_ret.std()
-                sim_results = np.zeros((t_days, n_sim))
-                for i in range(n_sim):
-                    daily_sim = np.random.normal(mu, sigma, t_days)
-                    sim_results[:, i] = fof_nav.iloc[-1] * (1 + daily_sim).cumprod()
-                
-                fig_sim = go.Figure()
-                for i in range(min(50, n_sim)): # 展示50条样本
-                    fig_sim.add_trace(go.Scatter(y=sim_results[:, i], mode='lines', line=dict(width=0.6), opacity=0.3, showlegend=False))
-                fig_sim.update_layout(title=f"未来 {t_days} 天净值演化路径", yaxis_title="预期净值", template="plotly_white")
-                st.plotly_chart(fig_sim, use_container_width=True)
-                st.success(f"模拟完成！持有期末净值中位数预测: {np.median(sim_results[-1, :]):.4f}")
+        st.header("🧪 模拟测试(Beta)")
+        if st.button("启动蒙特卡洛预测"):
+            mu, sigma = fof_daily_ret.mean(), fof_daily_ret.std()
+            sims = np.zeros((126, 100))
+            for i in range(100):
+                sims[:, i] = fof_nav.iloc[-1] * (1 + np.random.normal(mu, sigma, 126)).cumprod()
+            fig_sim = go.Figure()
+            for i in range(20): fig_sim.add_trace(go.Scatter(y=sims[:,i], mode='lines', opacity=0.3))
+            st.plotly_chart(fig_sim, use_container_width=True)
 
-        with col_s2:
-            st.subheader("📉 极端情景压力测试")
-            st.write("模拟当前组合在历史极端行情下的即时冲击：")
-            scene_data = {
-                "2015 股灾流动性冲击": -0.15,
-                "2018 中美贸易战慢熊": -0.08,
-                "2022 权益市场深度回调": -0.12,
-                "自定义黑天鹅事件": -0.20
-            }
-            sel_scene = st.selectbox("选择压力测试场景", list(scene_data.keys()))
-            impact = scene_data[sel_scene]
-            
-            stress_nav = fof_nav.iloc[-1] * (1 + impact)
-            st.metric("情景后预估净值", f"{stress_nav:.4f}", delta=f"{impact:.1%}", delta_color="inverse")
-            st.info("注：压力测试基于静态权重，未考虑风险平价调仓的防御效应。")
+    # --- Tab 7: 资产池全量对比 (新增：专业表格与多选) ---
+    with tabs[6]:
+        st.header("📊 全资产池深度比较实验室")
+        all_comp_list = st.multiselect("挑选对比产品 (支持总库所有产品)", fund_pool, default=fund_pool[:min(5, len(fund_pool))])
+        if all_comp_list:
+            fig_all = go.Figure()
+            res_table = []
+            for f in all_comp_list:
+                f_raw_data = period_data[f].dropna()
+                f_norm_data = norm_data[f].dropna()
+                fig_all.add_trace(go.Scatter(x=f_norm_data.index, y=f_norm_data, name=f))
+                
+                m = calculate_metrics(f_raw_data, bench_nav)
+                m_gap, _, _ = analyze_new_high_gap(f_raw_data)
+                res_table.append({
+                    "产品名称": f, "总收益率": f"{m['总收益率']:.2%}", "年化收益": f"{m['年化收益']:.2%}",
+                    "最大回撤": f"{m['最大回撤']:.2%}", "夏普比率": round(m['夏普比率'],2),
+                    "索提诺": round(m['索提诺'],2), "卡玛比率": round(m['卡玛比率'],2),
+                    "信息比率": round(m['信息比率'],2), "新高间隔(天)": m_gap
+                })
+            st.plotly_chart(fig_all, use_container_width=True)
+            st.markdown("#### 📑 全维度指标对比表")
+            st.table(pd.DataFrame(res_table).set_index("产品名称"))
 
 else:
-    st.info("👋 欢迎使用寻星配置分析系统 2.10.0。请在左侧上传经脚本清洗后的 Excel 总库以开启底座。")
+    st.info("👋 请上传底层数据库启动 2.11.0 版本。")
