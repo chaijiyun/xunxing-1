@@ -93,11 +93,11 @@ if uploaded_file:
     stats = calculate_metrics(fof_nav, bench_nav)
 
     # 看板导航
-    tabs = st.tabs(["🚀 FOF 驾驶舱", "🛡️ 风险压力测试", "🔍 底层穿透诊断", "🧩 资产配置逻辑", "📝 投研报告生成"])
+    tabs = st.tabs(["🚀 配置驾驶舱", "🛡️ 风险压力测试", "🔍 底层穿透诊断", "🧩 资产配置逻辑", "📝 投研报告生成"])
 
     # --- Tab 1: FOF 驾驶舱 (核心优化区) ---
     with tabs[0]:
-        st.markdown("### 🏛️ 寻星 FOF 核心监控看板")
+        st.markdown("### 🏛️ 寻星配置核心表现")
         
         # 1. 核心指标区
         c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -185,3 +185,4 @@ if uploaded_file:
 
 else:
     st.info("👋 欢迎使用寻星配置分析系统 2.9.0。请在左侧上传经脚本清洗后的 Excel 总库。")
+
