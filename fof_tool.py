@@ -9,8 +9,13 @@ from datetime import datetime
 # 1. 核心计算引擎
 # ==========================================
 def calculate_metrics(nav, bench=None):
-    """计算全套量化指标"""
+    """计算全套量化指标（增强了对 NaN 的防护）"""
     res = {}
+    # 清洗数据：去除头部空值，填充中间空值
+    nav = nav.dropna().ffill()
+    if len(nav) < 2:
+        return {k: 0.0 for k in ["总收益率", "年化收益", "最大回撤", "夏普比率", "索提诺", "卡玛比率", "波动率", "信息比率"]}
+    
     returns = nav.pct_change().fillna(0)
     days = (nav.index[-1] - nav.index[0]).days
     
@@ -20,11 +25,8 @@ def calculate_metrics(nav, bench=None):
     vol = returns.std() * np.sqrt(252)
     sharpe = (ann_ret - 0.02) / vol if vol > 0 else 0
     
-    # 索提诺比率 (Sortino)
     downside_vol = returns[returns < 0].std() * np.sqrt(252)
     sortino = (ann_ret - 0.02) / downside_vol if downside_vol > 0 else 0
-    
-    # 卡玛比率 (Calmar)
     calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
     
     res = {
@@ -33,6 +35,7 @@ def calculate_metrics(nav, bench=None):
     }
     
     if bench is not None:
+        bench = bench.reindex(nav.index).ffill()
         b_ret = bench.pct_change().fillna(0)
         active_ret = returns - b_ret
         te = active_ret.std() * np.sqrt(252)
@@ -41,7 +44,8 @@ def calculate_metrics(nav, bench=None):
     return res
 
 def analyze_new_high_gap(nav_series):
-    """计算创新高间隔及路径诊断 (复刻 2.5.1)"""
+    """计算创新高间隔及路径诊断"""
+    nav_series = nav_series.dropna()
     if nav_series.empty:
         return 0, "无数据", nav_series.index
     peak_series = nav_series.cummax()
@@ -56,7 +60,6 @@ def analyze_new_high_gap(nav_series):
     else:
         status = "无新高记录"
         m_gap = 0
-        
     return m_gap, status, new_high_dates
 
 # ==========================================
@@ -68,8 +71,7 @@ st.sidebar.header("🏛️ 寻星投研控制台")
 uploaded_file = st.sidebar.file_uploader("1. 上传底层数据库 (xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # 加载数据并使用 ffill 解决断点问题
-    df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
+    df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index()
     all_cols = df_raw.columns.tolist()
     
     bench_keywords = ["300", "500", "1000", "指数", "基准"]
@@ -85,23 +87,25 @@ if uploaded_file:
         st.stop()
     
     st.sidebar.markdown("---")
-    weights = {}
-    for f in sel_funds:
-        weights[f] = st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, 1.0/len(sel_funds), step=0.05)
-    
+    weights = {f: st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, 1.0/len(sel_funds), step=0.05) for f in sel_funds}
     total_w = sum(weights.values())
     st.sidebar.markdown(f"**当前总权重: {total_w:.2%}**")
     
     analysis_start = st.sidebar.date_input("分析起点", value=df_raw.index.min())
     analysis_end = st.sidebar.date_input("分析终点", value=df_raw.index.max())
 
-    period_data = df_raw.loc[analysis_start:analysis_end].ffill().dropna(how='all')
-    norm_data = period_data / period_data.iloc[0]
+    # --- 核心数据对齐与归一化逻辑 ---
+    period_data = df_raw.loc[analysis_start:analysis_end].ffill()
+    norm_data = period_data.copy()
+    for col in norm_data.columns:
+        first_valid = norm_data[col].first_valid_index()
+        if first_valid is not None:
+            norm_data[col] = norm_data[col] / norm_data.loc[first_valid, col]
     
     w_series = pd.Series(weights) / (total_w if total_w > 0 else 1)
     fof_daily_ret = (norm_data[sel_funds].pct_change().fillna(0) * w_series).sum(axis=1)
     fof_nav = (1 + fof_daily_ret).cumprod()
-    bench_nav = norm_data[sel_bench]
+    bench_nav = norm_data[sel_bench].ffill()
     
     stats = calculate_metrics(fof_nav, bench_nav)
 
@@ -129,20 +133,20 @@ if uploaded_file:
         fig_bot = go.Figure()
         cp = ['#16A085', '#2980B9', '#8E44AD', '#D35400', '#2C3E50', '#C0392B', '#27AE60']
         for i, f in enumerate(sel_funds):
-            fig_bot.add_trace(go.Scatter(x=norm_data.index, y=norm_data[f], name=f"底层:{f}", line=dict(width=1.8, color=cp[i % len(cp)]), opacity=0.7))
+            f_plot = norm_data[f].dropna()
+            fig_bot.add_trace(go.Scatter(x=f_plot.index, y=f_plot, name=f"底层:{f}", line=dict(width=1.8, color=cp[i % len(cp)]), opacity=0.7))
         fig_bot.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{sel_bench}", line=dict(color="#BDC3C7", dash="dot", width=2)))
         fig_bot.add_trace(go.Scatter(x=fof_nav.index, y=fof_nav, name="🏛️ FOF 组合", line=dict(color="#1E3A8A", width=4.5)))
         fig_bot.update_layout(height=550, title="图2：全资产穿透对比", hovermode="x unified", template="plotly_white")
         st.plotly_chart(fig_bot, use_container_width=True)
 
-    # --- Tab 2: 底层穿透诊断 (修正变量名错误) ---
+    # --- Tab 2: 底层穿透诊断 ---
     with tabs[2]:
         mode = st.radio("选择诊断模式", ["单产品深度诊断", "多产品对比分析"], horizontal=True)
-        
         if mode == "单产品深度诊断":
             target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
-            tn = norm_data[target_f]
-            tr = period_data[target_f]
+            tn = norm_data[target_f].dropna()
+            tr = period_data[target_f].dropna()
             ts = calculate_metrics(tn, bench_nav)
             
             ca, cb, cc = st.columns(3)
@@ -150,13 +154,11 @@ if uploaded_file:
             cb.metric("最大历史回撤", f"{ts['最大回撤']:.2%}")
             cc.metric("配置权重", f"{w_series[target_f]:.1%}")
 
-            # 修复点：确保变量名为 max_g
             max_g, status_str, high_dates = analyze_new_high_gap(tr)
             fig_f = go.Figure()
             fig_f.add_trace(go.Scatter(x=tn.index, y=tn, name="实际净值", line=dict(color='#1e3a8a', width=2.5)))
             fig_f.add_trace(go.Scatter(x=high_dates, y=tn[high_dates], mode='markers', name="新高时刻", marker=dict(color='red', size=7)))
-            fig_f.update_layout(title=f"{target_f} 路径分析 (最长新高间隔: {max_g}天 | 当前: {status_str})", 
-                              height=450, template="plotly_white")
+            fig_f.update_layout(title=f"{target_f} 路径分析 (最长新高间隔: {max_g}天 | 当前: {status_str})", height=450, template="plotly_white")
             st.plotly_chart(fig_f, use_container_width=True)
 
             st.markdown("##### 📅 年度收益对照")
@@ -165,28 +167,23 @@ if uploaded_file:
             y_df.index = ["收益率"]
             y_df.columns = [d.year for d in y_df.columns]
             st.dataframe(y_df.style.format("{:.2%}"), use_container_width=True)
-
         else:
             st.markdown("### 📐 底层产品多维度对比分析")
             compare_funds = st.multiselect("选择对比产品", sel_funds, default=sel_funds[:min(2, len(sel_funds))])
             if compare_funds:
                 fig_comp = go.Figure()
                 for f in compare_funds:
-                    fig_comp.add_trace(go.Scatter(x=norm_data.index, y=norm_data[f], name=f, line=dict(width=2)))
-                fig_comp.update_layout(height=500, title="对比净值走势 (起点归一化)", template="plotly_white", hovermode="x unified")
+                    f_c = norm_data[f].dropna()
+                    fig_comp.add_trace(go.Scatter(x=f_c.index, y=f_c, name=f, line=dict(width=2)))
+                fig_comp.update_layout(height=500, title="对比净值走势", template="plotly_white", hovermode="x unified")
                 st.plotly_chart(fig_comp, use_container_width=True)
-                
                 comp_metrics = []
                 for f in compare_funds:
                     f_m = calculate_metrics(norm_data[f], bench_nav)
-                    comp_metrics.append({
-                        "产品": f, "总收益率": f"{f_m['总收益率']:.2%}", "年化收益": f"{f_m['年化收益']:.2%}",
-                        "最大回撤": f"{f_m['最大回撤']:.2%}", "夏普比率": f"{f_m['夏普比率']:.2f}",
-                        "卡玛比率": f"{f_m['卡玛比率']:.2f}"
-                    })
+                    comp_metrics.append({"产品": f, "总收益率": f"{f_m['总收益率']:.2%}", "年化收益": f"{f_m['年化收益']:.2%}", "最大回撤": f"{f_m['最大回撤']:.2%}", "夏普比率": f"{f_m['夏普比率']:.2f}", "卡玛比率": f"{f_m['卡玛比率']:.2f}"})
                 st.table(pd.DataFrame(comp_metrics).set_index("产品"))
 
-    # --- Tab 1, 3, 4, 5 保持功能稳定 ---
+    # --- 其他看板保持稳定 ---
     with tabs[1]:
         st.subheader("🛡️ 风险压力测试")
         mdd_curve = (fof_nav / fof_nav.cummax() - 1)
@@ -219,6 +216,5 @@ if uploaded_file:
             </ul></div>"""
         st.markdown(report_html, unsafe_allow_html=True)
         st.download_button("💾 下载报告 (HTML)", report_html, "寻星投研报告.html", "text/html")
-
 else:
     st.info("👋 欢迎使用寻星配置分析系统 2.9.0。请在左侧上传经脚本清洗后的 Excel 总库。")
