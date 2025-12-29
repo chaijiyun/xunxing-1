@@ -16,11 +16,9 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # --- 登录界面美化部分 ---
-        st.markdown("<br><br>", unsafe_allow_html=True) # 预留上方Logo位置
+        st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("<div style='text-align: center; color: #999;'>[ 此处预留公司 LOGO 位置 ]</div>", unsafe_allow_html=True)
         st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.text_input(label="", type="password", on_change=password_entered, key="password")
@@ -38,7 +36,7 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎
+    # 1. 核心指标计算引擎 (已精准新增水下时间指标)
     # ==========================================
     def get_max_drawdown_recovery_days(nav_series):
         if nav_series.empty or len(nav_series) < 2: return 0, "数据不足"
@@ -57,14 +55,6 @@ if check_password():
         else:
             return 9999, "尚未修复"
 
-    def get_longest_new_high_interval(nav_series):
-        if nav_series.empty: return 0
-        cummax = nav_series.cummax()
-        high_dates = nav_series[nav_series == cummax].index.to_series()
-        if len(high_dates) < 2: return (nav_series.index[-1] - nav_series.index[0]).days
-        diffs = high_dates.diff().dt.days
-        return int(diffs.max()) if not pd.isna(diffs.max()) else 0
-
     def calculate_metrics(nav):
         nav = nav.dropna()
         if len(nav) < 2: return {}
@@ -78,23 +68,22 @@ if check_password():
         rf = 0.02
         sharpe = (ann_ret - rf) / vol if vol > 0 else 0
         calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
-        downside_vol = returns[returns < 0].std() * np.sqrt(252)
-        sortino = (ann_ret - rf) / downside_vol if downside_vol > 0 else 0
+        # 精准新增建议1指标：水下时间占比
+        under_water_mask = nav < cummax
+        tuw_ratio = under_water_mask.sum() / len(nav)
+        
         rep_v, rep_s = get_max_drawdown_recovery_days(nav)
-        high_gap = get_longest_new_high_interval(nav)
         return {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
-            "夏普比率": sharpe, "卡玛比率": calmar, "年化波动率": vol, 
-            "索提诺比率": sortino, "回撤修复天数": rep_s, "最长新高间隔": f"{high_gap}天"
+            "夏普比率": sharpe, "卡玛比率": calmar, "回撤修复天数": rep_s,
+            "水下时间占比": tuw_ratio
         }
 
     # ==========================================
     # 2. UI 界面与侧边栏控制
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.24", page_icon="🏛️")
-
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.25", page_icon="🏛️")
     st.sidebar.title("🏛️ 寻星配置分析系统")
-    # 精准修改此处提示文字：
     uploaded_file = st.sidebar.file_uploader("📂 请上传产品数据库", type=["xlsx"])
 
     if uploaded_file:
@@ -102,17 +91,13 @@ if check_password():
         df_raw.columns = [str(c).strip() for c in df_raw.columns]
         all_cols = df_raw.columns.tolist()
         
-        # 1. 业绩基准
         st.sidebar.markdown("---")
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
         
-        # 2. 构建寻星配置组合
-        fund_pool = [c for c in all_cols if c != sel_bench]
         st.sidebar.subheader("🛠️ 构建寻星配置组合")
-        sel_funds = st.sidebar.multiselect("挑选组合成分", fund_pool, default=[])
+        sel_funds = st.sidebar.multiselect("挑选组合成分", [c for c in all_cols if c != sel_bench], default=[])
         
-        # 3. 比例分配
         weights = {}
         if sel_funds:
             st.sidebar.markdown("#### ⚖️ 比例分配")
@@ -120,11 +105,9 @@ if check_password():
             for f in sel_funds:
                 weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
         
-        # 4. 时间跨度选择
         st.sidebar.markdown("---")
         st.sidebar.subheader("📅 时间跨度选择")
-        min_date = df_raw.index.min().to_pydatetime()
-        max_date = df_raw.index.max().to_pydatetime()
+        min_date, max_date = df_raw.index.min().to_pydatetime(), df_raw.index.max().to_pydatetime()
         start_date = st.sidebar.date_input("起始日期", min_date, min_value=min_date, max_value=max_date)
         end_date = st.sidebar.date_input("截止日期", max_date, min_value=min_date, max_value=max_date)
         
@@ -151,13 +134,14 @@ if check_password():
             if star_nav is not None:
                 st.subheader(f"📊 寻星配置组合全景图 ({start_date} 至 {end_date})")
                 m = calculate_metrics(star_nav)
-                c1, c2, c3, c4, c5, c6 = st.columns(6)
-                c1.metric("区间收益率", f"{m['总收益率']:.2%}")
-                c2.metric("年化收益", f"{m['年化收益']:.2%}")
-                c3.metric("区间最大回撤", f"{m['最大回撤']:.2%}")
-                c4.metric("夏普比率", f"{m['夏普比率']:.2f}")
-                c5.metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-                c6.metric("修复天数", m['回撤修复天数'])
+                c = st.columns(7) # 精准调整为7列
+                c[0].metric("区间收益率", f"{m['总收益率']:.2%}")
+                c[1].metric("年化收益", f"{m['年化收益']:.2%}")
+                c[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
+                c[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
+                c[4].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
+                c[5].metric("修复天数", m['回撤修复天数'])
+                c[6].metric("水下时间占比", f"{m['水下时间占比']:.1%}") # 建议1精准落位
                 
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='#1E40AF', width=3.5)))
