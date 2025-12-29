@@ -23,12 +23,10 @@ def check_password():
         
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            # label设为空字符串，文字提示放在下方
             st.text_input(label="", type="password", on_change=password_entered, key="password")
             st.markdown("<p style='text-align: center; color: #666; font-size: 0.9em;'>请输入访问密码</p>", unsafe_allow_html=True)
         return False
     elif not st.session_state["password_correct"]:
-        # 错误重试界面
         st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -93,11 +91,11 @@ if check_password():
     # ==========================================
     # 2. UI 界面与侧边栏控制
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.23", page_icon="🏛️")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.24", page_icon="🏛️")
 
-    # 精准修改此处标题：
     st.sidebar.title("🏛️ 寻星配置分析系统")
-    uploaded_file = st.sidebar.file_uploader("📂 加载寻星配置底座 (xlsx)", type=["xlsx"])
+    # 精准修改此处提示文字：
+    uploaded_file = st.sidebar.file_uploader("📂 请上传产品数据库", type=["xlsx"])
 
     if uploaded_file:
         df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
@@ -186,6 +184,7 @@ if check_password():
                 with cw1:
                     st.plotly_chart(px.pie(names=list(weights.keys()), values=list(weights.values()), hole=0.4, title="当前组合权重分布"), use_container_width=True)
                 with cw2:
+                    st.write("##### 权重明细")
                     st.table(pd.DataFrame.from_dict(weights, orient='index', columns=['所占比例']).style.format("{:.2%}"))
             else:
                 st.info("👈 请先勾选成分产品。")
@@ -202,4 +201,4 @@ if check_password():
             else:
                 st.info("🔎 请在此处勾选产品以展示数据。")
     else:
-        st.info("👋 请在左侧上传‘寻星配置底座’文件以开始分析。")
+        st.info("👋 请在左侧上传‘产品数据库’文件以开始分析。")
