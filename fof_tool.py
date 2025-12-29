@@ -4,190 +4,204 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import base64
 
 # ==========================================
-# 1. 深度风险分析引擎 (桥水投研风格)
+# 1. 桥水级量化分析引擎
 # ==========================================
-def analyze_advanced_stats(nav_series, benchmark_nav=None):
-    """计算包含索提诺、信息比率等高级指标"""
-    ret_daily = nav_series.pct_change().fillna(0)
-    days = (nav_series.index[-1] - nav_series.index[0]).days
-    # 累计收益
-    total_ret = (nav_series.iloc[-1] / nav_series.iloc[0]) - 1
-    # 年化收益 (365.25天逻辑)
-    ann_ret = (nav_series.iloc[-1] / nav_series.iloc[0]) ** (365.25 / max(days, 1)) - 1
-    
-    # 最大回撤
-    mdd_series = (nav_series / nav_series.cummax() - 1)
-    mdd = mdd_series.min()
-    # 年化波动率
-    vol = ret_daily.std() * np.sqrt(252)
-    # 夏普比率 (无风险利率设为 2%)
+def calculate_metrics(nav, bench=None):
+    """计算核心指标组：年化、回撤、夏普、索提诺、卡玛、信息比率"""
+    res = {}
+    returns = nav.pct_change().fillna(0)
+    days = (nav.index[-1] - nav.index[0]).days
+    ann_ret = (nav.iloc[-1] / nav.iloc[0]) ** (365.25 / max(days, 1)) - 1
+    mdd = (nav / nav.cummax() - 1).min()
+    vol = returns.std() * np.sqrt(252)
     sharpe = (ann_ret - 0.02) / vol if vol > 0 else 0
-    # 索提诺比率 (仅针对下行波动)
-    downside_ret = ret_daily[ret_daily < 0]
-    downside_vol = downside_ret.std() * np.sqrt(252)
+    # 索提诺比率 (Sortino)
+    downside_vol = returns[returns < 0].std() * np.sqrt(252)
     sortino = (ann_ret - 0.02) / downside_vol if downside_vol > 0 else 0
-    # 卡玛比率
+    # 卡玛比率 (Calmar)
     calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
     
-    info_ratio = 0
-    active_risk = 0
-    if benchmark_nav is not None:
-        bench_ret_daily = benchmark_nav.pct_change().fillna(0)
-        # 确保日期对齐计算超额
-        active_ret_daily = ret_daily - bench_ret_daily
-        # 年化超额收益
-        active_ret_ann = active_ret_daily.mean() * 252
-        # 跟踪误差
-        active_risk = active_ret_daily.std() * np.sqrt(252)
-        info_ratio = active_ret_ann / active_risk if active_risk > 0 else 0
-
-    return {
-        "total_ret": total_ret, "ann_ret": ann_ret, "mdd": mdd, "vol": vol, 
-        "sharpe": sharpe, "sortino": sortino, "calmar": calmar, 
-        "info_ratio": info_ratio, "active_risk": active_risk, "mdd_series": mdd_series
-    }
+    res = {"年化收益": ann_ret, "最大回撤": mdd, "夏普比率": sharpe, 
+           "索提诺": sortino, "卡玛比率": calmar, "波动率": vol}
+    
+    if bench is not None:
+        b_ret = bench.pct_change().fillna(0)
+        active_ret = returns - b_ret
+        te = active_ret.std() * np.sqrt(252) # 跟踪误差
+        ir = (active_ret.mean() * 252) / te if te > 0 else 0
+        res["信息比率"] = ir
+        res["跟踪误差"] = te
+    return res
 
 # ==========================================
-# 2. 系统界面布局
+# 2. 系统 UI & 交互配置
 # ==========================================
-st.set_page_config(layout="wide", page_title="寻星 2.7.0", page_icon="🏛️")
+st.set_page_config(layout="wide", page_title="寻星配置分析系统 2.9.0", page_icon="📈")
 
-# CSS 注入美化表格
-st.markdown("""<style> .metric-card { background-color: #f0f2f6; padding: 10px; border-radius: 10px; } </style>""", unsafe_allow_html=True)
-
-st.title("🏛️ 寻星配置分析系统 2.7.0")
-st.caption(f"迭代日期: {datetime.now().strftime('%Y-%m-%d')} | 桥水投研风格 | 索提诺/信息比率穿透 | 多产品对比")
-
-uploaded_file = st.sidebar.file_uploader("1. 上传底层数据库 (Excel)", type=["xlsx"])
+# 侧边栏：核心配置区
+st.sidebar.header("🏛️ 寻星投研控制台")
+uploaded_file = st.sidebar.file_uploader("1. 数据源上传 (底层数据库.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # A. 数据加载
-    raw_df = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).dropna(how='all').sort_index()
-    all_cols = raw_df.columns.tolist()
+    df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).dropna(how='all').sort_index()
+    all_cols = df_raw.columns.tolist()
     
-    # B. 基准识别与勾选
-    st.sidebar.subheader("2. 策略对标配置")
-    bench_candidates = [c for c in all_cols if any(x in c for x in ["300", "500", "指数", "基准", "1000"])]
-    selected_bench = st.sidebar.selectbox("选择对标基准 (Benchmark)", bench_candidates if bench_candidates else all_cols)
+    # 自动识别指数/基准
+    bench_keywords = ["300", "500", "1000", "指数", "基准"]
+    def_bench = [c for c in all_cols if any(k in c for k in bench_keywords)]
     
-    other_funds = [c for c in all_cols if c != selected_bench]
-    selected_funds = st.sidebar.multiselect("挑选拟配置产品", other_funds, default=other_funds[:min(3, len(other_funds))])
+    st.sidebar.subheader("2. 策略组合配置")
+    sel_bench = st.sidebar.selectbox("选择基准 (Benchmark)", def_bench if def_bench else all_cols)
+    fund_pool = [c for c in all_cols if c != sel_bench]
     
-    if not selected_funds:
-        st.warning("👈 请在左侧勾选需要分析的底层产品。")
+    # 自选产品功能
+    sel_funds = st.sidebar.multiselect("挑选拟持仓产品", fund_pool, default=fund_pool[:min(3, len(fund_pool))])
+    
+    if not sel_funds:
+        st.warning("👈 请在左侧勾选拟分析的底层产品。")
         st.stop()
-
-    # C. 权重分配
+    
+    # 动态权重分配
     st.sidebar.markdown("---")
-    weights_dict = {}
-    for f in selected_funds:
-        weights_dict[f] = st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, 1.0/len(selected_funds), step=0.05)
+    st.sidebar.caption("权重分配 (合计需为 1.0)")
+    weights = {}
+    for f in sel_funds:
+        weights[f] = st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, 1.0/len(sel_funds), step=0.05)
     
-    total_w = sum(weights_dict.values())
-    st.sidebar.info(f"当前总权重: {total_w:.2%}")
+    total_w = sum(weights.values())
+    w_color = "#27AE60" if abs(total_w-1.0) < 0.01 else "#E74C3C"
+    st.sidebar.markdown(f"**权重合计: <span style='color:{w_color}'>{total_w:.2%}</span>**", unsafe_allow_html=True)
+    
+    # 时间范围
+    analysis_start = st.sidebar.date_input("分析起点", value=df_raw.index.min())
+    analysis_end = st.sidebar.date_input("分析终点", value=df_raw.index.max())
 
-    s_date = st.sidebar.date_input("分析起点", value=raw_df.index.min())
-    e_date = st.sidebar.date_input("分析终点", value=raw_df.index.max())
+    # 数据处理
+    period_data = df_raw.loc[analysis_start:analysis_end].ffill()
+    norm_data = period_data / period_data.iloc[0]
     
-    # D. 核心计算
-    p_nav = raw_df.loc[s_date:e_date].ffill()
-    p_nav_norm = p_nav / p_nav.iloc[0]
+    # 组合净值计算
+    w_series = pd.Series(weights) / (total_w if total_w > 0 else 1)
+    fof_daily_ret = (norm_data[sel_funds].pct_change().fillna(0) * w_series).sum(axis=1)
+    fof_nav = (1 + fof_daily_ret).cumprod()
+    bench_nav = norm_data[sel_bench]
     
-    # FOF 组合净值
-    w_series = pd.Series(weights_dict) / (total_w if total_w != 0 else 1)
-    fof_ret = (p_nav_norm[selected_funds].pct_change().fillna(0) * w_series).sum(axis=1)
-    fof_nav = (1 + fof_ret).cumprod()
-    
-    # 基准净值
-    bench_nav = p_nav_norm[selected_bench]
-    
-    # 统计数据
-    f_stats = analyze_advanced_stats(fof_nav, bench_nav)
-    b_stats = analyze_advanced_stats(bench_nav)
+    # ==========================================
+    # 3. 五大功能看板渲染
+    # ==========================================
+    tabs = st.tabs(["🚀 FOF 驾驶舱", "🛡️ 风险压力测试", "🔍 底层穿透诊断", "🧩 资产配置逻辑", "📝 投研报告生成"])
 
-    # --- 功能标签页 ---
-    tab1, tab2, tab3 = st.tabs(["📊 FOF 看板 (全维度对比)", "🔍 桥水风险诊断", "📄 导出深度投研报告"])
-
-    with tab1:
-        st.markdown("### 🏛️ FOF 综合配置绩效")
-        # 指标卡
+    # --- Tab 1: FOF 驾驶舱 ---
+    with tabs[0]:
+        st.subheader("🏛️ FOF 组合核心表现 (对标: %s)" % sel_bench)
+        stats = calculate_metrics(fof_nav, bench_nav)
+        b_stats = calculate_metrics(bench_nav)
+        
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("累计收益率", f"{f_stats['total_ret']:.2%}")
-        c2.metric("最大回撤", f"{f_stats['mdd']:.2%}", f"基准: {b_stats['mdd']:.1%}", delta_color="inverse")
-        c3.metric("索提诺比率", f"{f_stats['sortino']:.2f}", help="针对下行风险的收益比")
-        c4.metric("信息比率", f"{f_stats['info_ratio']:.2f}", help="超额收益性价比")
-        c5.metric("卡玛比率", f"{f_stats['calmar']:.2f}", help="年化收益/最大回撤")
+        c1.metric("年化收益率", f"{stats['年化收益']:.2%}")
+        c2.metric("最大回撤", f"{stats['最大回撤']:.2%}", f"基准 {b_stats['最大回撤']:.1%}", delta_color="inverse")
+        c3.metric("夏普比率", f"{stats['夏普比率']:.2f}")
+        c4.metric("卡玛比率", f"{stats['卡玛比率']:.2f}", help="收益回撤比")
+        c5.metric("信息比率 (IR)", f"{stats['信息比率']:.2f}", help="超越基准的稳定性")
 
-        # FOF 全图表
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+        # 核心多线走势图
+        fig_main = go.Figure()
+        for f in sel_funds:
+            fig_main.add_trace(go.Scatter(x=norm_data.index, y=norm_data[f], name=f"底层:{f}", line=dict(width=1, color="rgba(100,100,100,0.2)")))
+        fig_main.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{sel_bench}", line=dict(color="#BDC3C7", dash="dot", width=2)))
+        fig_main.add_trace(go.Scatter(x=fof_nav.index, y=fof_nav, name="🏛️ FOF 组合", line=dict(color="#1E3A8A", width=4)))
         
-        # 叠加底层产品细线
-        for fund in selected_funds:
-            fig.add_trace(go.Scatter(x=p_nav_norm.index, y=p_nav_norm[fund], name=f"底层:{fund}", 
-                                     line=dict(width=1), opacity=0.3), row=1, col=1)
-        
-        # 叠加 FOF 和 基准粗线
-        fig.add_trace(go.Scatter(x=fof_nav.index, y=fof_nav, name="🏛️ FOF组合", line=dict(color='red', width=4)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=bench_nav.index, y=bench_nav, name=f"基准:{selected_bench}", line=dict(color='gray', width=2, dash='dot')), row=1, col=1)
-        
-        # 回撤图
-        fig.add_trace(go.Scatter(x=f_stats['mdd_series'].index, y=f_stats['mdd_series'], name="回撤路径", fill='tozeroy', line=dict(color='rgba(255,0,0,0.2)')), row=2, col=1)
-        
-        fig.update_layout(height=700, hovermode="x unified", legend=dict(orientation="h", y=1.05))
-        st.plotly_chart(fig, use_container_width=True)
+        fig_main.update_layout(height=600, hovermode="x unified", title="组合 vs 单资产累计表现", template="plotly_white")
+        st.plotly_chart(fig_main, use_container_width=True)
 
-    with tab2:
-        st.markdown("### 🧬 桥水式风险诊断")
+    # --- Tab 2: 风险压力测试 ---
+    with tabs[1]:
+        st.subheader("🛡️ 风险路径与暴露分析")
+        mdd_curve = (fof_nav / fof_nav.cummax() - 1)
+        
+        cola, colb = st.columns([2, 1])
+        with cola:
+            fig_mdd = go.Figure()
+            fig_mdd.add_trace(go.Scatter(x=mdd_curve.index, y=mdd_curve, fill='tozeroy', name="FOF 回撤", line=dict(color="#E74C3C")))
+            fig_mdd.update_layout(height=450, title="组合动态回撤路径", yaxis_tickformat=".1%")
+            st.plotly_chart(fig_mdd, use_container_width=True)
+        
+        with colb:
+            st.write("**风险体检表**")
+            risk_table = pd.DataFrame({
+                "分析维度": ["年化波动率", "最大回撤", "下行标准差", "跟踪误差 (TE)"],
+                "组合数值": [f"{stats['波动率']:.2%}", f"{stats['最大回撤']:.2%}", 
+                           f"{(fof_daily_ret[fof_daily_ret<0].std()*np.sqrt(252)):.2%}", f"{stats['跟踪误差']:.2%}"]
+            })
+            st.table(risk_table)
+
+    # --- Tab 3: 底层穿透诊断 ---
+    with tabs[2]:
+        st.subheader("🔍 单一底层资产穿透分析")
+        target_f = st.selectbox("🎯 选择诊断目标", sel_funds)
+        tn = norm_data[target_f]
+        ts = calculate_metrics(tn, bench_nav)
+        
+        # 计算潜伏期（无新高天数）
+        peak_t = period_data[target_f].cummax()
+        high_dates = period_data[target_f][period_data[target_f] >= (peak_t * 0.9995)].index
+        max_gap = pd.Series(high_dates).diff().dt.days.max()
+
+        ca, cb, cc, cd = st.columns(4)
+        ca.metric("年化收益率", f"{ts['年化收益']:.2%}")
+        cb.metric("最大回撤", f"{ts['最大回撤']:.2%}")
+        cc.metric("夏普比率", f"{ts['夏普比率']:.2f}")
+        cd.metric("最长无新高周期", f"{max_gap} 天")
+
+        fig_diag = go.Figure()
+        fig_diag.add_trace(go.Scatter(x=tn.index, y=tn, name=target_f, line=dict(color="#1E3A8A", width=2)))
+        fig_diag.add_trace(go.Scatter(x=high_dates, y=tn[high_dates], mode='markers', name="创新高时刻", marker=dict(color="red", size=6)))
+        fig_diag.update_layout(height=450, title=f"{target_f} 净值与创新高时刻诊断")
+        st.plotly_chart(fig_diag, use_container_width=True)
+
+    # --- Tab 4: 资产配置逻辑 ---
+    with tabs[3]:
+        st.subheader("🧩 组合配置与相关性逻辑")
         la, lb = st.columns(2)
         with la:
-            st.write("**风险对标矩阵**")
-            compare_df = pd.DataFrame({
-                "分析维度": ["年化收益率", "夏普比率", "索提诺比率", "卡玛比率", "年化波动率"],
-                "FOF组合": [f"{f_stats['ann_ret']:.2%}", f"{f_stats['sharpe']:.2f}", f"{f_stats['sortino']:.2f}", f"{f_stats['calmar']:.2f}", f"{f_stats['vol']:.2%}"],
-                "对标基准": [f"{b_stats['ann_ret']:.2%}", f"{b_stats['sharpe']:.2f}", f"{b_stats['sortino']:.2f}", f"{b_stats['calmar']:.2f}", f"{b_stats['vol']:.2%}"]
-            })
-            st.table(compare_df)
-        
+            st.write("**1. 资产相关性矩阵 (低相关是组合的灵魂)**")
+            corr = period_data[sel_funds].pct_change().corr().round(2)
+            fig_corr = go.Figure(data=go.Heatmap(z=corr.values, x=corr.columns, y=corr.columns, colorscale='RdBu_r', zmin=-1, zmax=1))
+            st.plotly_chart(fig_corr, use_container_width=True)
         with lb:
-            st.write("**超额收益 (Alpha) 稳定性**")
-            st.metric("跟踪误差 (Tracking Error)", f"{f_stats['active_risk']:.2%}")
-            st.metric("信息比率 (Information Ratio)", f"{f_stats['info_ratio']:.2f}")
-            
-            # 年度胜率
-            f_y = fof_nav.resample('YE').apply(lambda x: x.iloc[-1]/x.iloc[0]-1)
-            b_y = bench_nav.resample('YE').apply(lambda x: x.iloc[-1]/x.iloc[0]-1)
-            win_df = pd.DataFrame({"FOF": f_y, "基准": b_y})
-            win_df["超额"] = win_df["FOF"] - win_df["基准"]
-            win_df.index = win_df.index.year
-            st.write("**年度超额统计**")
-            st.dataframe(win_df.style.format("{:.2%}"), use_container_width=True)
+            st.write("**2. 累计收益贡献度分析**")
+            contrib = (period_data[sel_funds].pct_change().fillna(0) * w_series).sum().sort_values()
+            fig_bar = go.Figure(go.Bar(x=contrib.values, y=contrib.index, orientation='h', marker_color='#34495E'))
+            fig_bar.update_layout(xaxis_tickformat=".2%", title="各资产对FOF总收益的绝对贡献")
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-    with tab3:
-        st.markdown("### 📋 报告导出中心")
-        if st.button("生成深度投研报告预览"):
-            weights_html = "".join([f"<li>{k}: {v:.1%}</li>" for k, v in weights_dict.items()])
-            report_html = f"""
-            <div style="font-family: sans-serif; padding: 30px; border: 2px solid #1e3a8a; border-radius: 10px;">
-                <h2 style="color: #1e3a8a; text-align: center;">🏛️ 寻星投研资产配置报告 (2.7.0版)</h2>
-                <hr>
-                <h4>一、FOF 组合概况 (对比基准: {selected_bench})</h4>
-                <table style="width:100%; border-collapse: collapse; text-align: center;">
-                    <tr style="background-color: #f2f2f2;"><th>指标</th><th>组合表现</th><th>基准表现</th></tr>
-                    <tr><td>累计收益</td><td>{f_stats['total_ret']:.2%}</td><td>{b_stats['total_ret']:.2%}</td></tr>
-                    <tr><td>最大回撤</td><td>{f_stats['mdd']:.2%}</td><td>{b_stats['mdd']:.2%}</td></tr>
-                    <tr><td>索提诺比率</td><td>{f_stats['sortino']:.2f}</td><td>{b_stats['sortino']:.2f}</td></tr>
-                    <tr><td>信息比率</td><td>{f_stats['info_ratio']:.2f}</td><td>--</td></tr>
-                </table>
-                <h4>二、资产配置权重</h4>
-                <ul>{weights_html}</ul>
-                <p style="color: #666; font-size: 12px; margin-top: 50px;">* 报告由寻星投研系统自动生成。历史业绩不代表未来收益。</p>
-            </div>
-            """
-            st.markdown(report_html, unsafe_allow_html=True)
-            st.download_button("💾 下载 HTML 报告 (可直接打印PDF)", report_html, "寻星深度报告.html", "text/html")
+    # --- Tab 5: 投研报告生成 ---
+    with tabs[4]:
+        st.subheader("📝 投研分析报告预览")
+        curr_time = datetime.now().strftime('%Y-%m-%d %H:%M')
+        
+        report_body = f"""
+        <div style="font-family: 'Microsoft YaHei', sans-serif; border: 3px solid #1E3A8A; padding: 40px; border-radius: 20px;">
+            <h1 style="color: #1E3A8A; text-align: center;">🏛️ 寻星配置分析系统 2.9.0 投研简报</h1>
+            <p style="text-align: right; color: gray;">生成日期: {curr_time}</p>
+            <hr>
+            <h3 style="color: #2C3E50;">一、组合绩效总结</h3>
+            <p>在指定的分析周期内，组合表现优异：</p>
+            <ul>
+                <li><b>年化回报:</b> {stats['年化收益']:.2%}</li>
+                <li><b>风险控制:</b> 最大回撤 {stats['最大回撤']:.2%}，卡玛比率 {stats['卡玛比率']:.2f}</li>
+                <li><b>超额效率:</b> 信息比率(IR)为 {stats['信息比率']:.2f}，表明配置具有极强的阿尔法获取能力。</li>
+            </ul>
+            <h3 style="color: #2C3E50;">二、持仓构成表</h3>
+            <p>{weights}</p>
+            <hr>
+            <p style="color: #95A5A6; font-size: 13px; text-align: center;">由寻星自动化数据中心驱动 | 严禁用于非法募资展示</p>
+        </div>
+        """
+        st.markdown(report_body, unsafe_allow_html=True)
+        st.download_button("💾 下载投研报告 (HTML)", report_body, f"寻星投研报告_{datetime.now().strftime('%m%d')}.html", "text/html")
 
 else:
-    st.info("👋 寻星系统 2.7.0 已就绪。请上传清洗后的数据库 Excel 开始投研之旅。")
+    st.info("👋 寻星系统 2.9.0 已启动。请在左侧侧边栏上传清洗后的数据库开始投研分析。")
