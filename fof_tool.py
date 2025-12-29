@@ -23,21 +23,24 @@ def check_password():
         
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.text_input("请输入访问密码", type="password", on_change=password_entered, key="password")
+            # label设为空字符串，文字提示放在下方
+            st.text_input(label="", type="password", on_change=password_entered, key="password")
+            st.markdown("<p style='text-align: center; color: #666; font-size: 0.9em;'>请输入访问密码</p>", unsafe_allow_html=True)
         return False
     elif not st.session_state["password_correct"]:
         # 错误重试界面
         st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.text_input("密码错误，请重新输入", type="password", on_change=password_entered, key="password")
+            st.text_input(label="", type="password", on_change=password_entered, key="password")
+            st.markdown("<p style='text-align: center; color: #D32F2F; font-size: 0.9em;'>密码错误，请重新输入</p>", unsafe_allow_html=True)
         return False
     else:
         return True
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎 (保持不变)
+    # 1. 核心指标计算引擎
     # ==========================================
     def get_max_drawdown_recovery_days(nav_series):
         if nav_series.empty or len(nav_series) < 2: return 0, "数据不足"
@@ -88,9 +91,9 @@ if check_password():
         }
 
     # ==========================================
-    # 2. UI 界面与侧边栏控制 (顺序保持: 成分 -> 权重 -> 时间)
+    # 2. UI 界面与侧边栏控制
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.21", page_icon="🏛️")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.22", page_icon="🏛️")
 
     st.sidebar.title("🏛️ 寻星控制台")
     uploaded_file = st.sidebar.file_uploader("📂 加载寻星配置底座 (xlsx)", type=["xlsx"])
@@ -105,7 +108,7 @@ if check_password():
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
         
-        # 2. 构建组合成分
+        # 2. 构建寻星配置组合
         fund_pool = [c for c in all_cols if c != sel_bench]
         st.sidebar.subheader("🛠️ 构建寻星配置组合")
         sel_funds = st.sidebar.multiselect("挑选组合成分", fund_pool, default=[])
@@ -141,7 +144,7 @@ if check_password():
                 bench_norm = bench_sync / (bench_sync.iloc[0] if not bench_sync.empty else 1)
 
         # ==========================================
-        # 3. 功能标签页 (保持不变)
+        # 3. 功能标签页
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 寻星配置底层产品分析", "🧩 权重与归因", "⚔️ 配置池产品分析"])
 
