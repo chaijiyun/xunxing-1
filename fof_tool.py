@@ -16,17 +16,28 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.text_input("请输入访问密码", type="password", on_change=password_entered, key="password")
+        # --- 登录界面美化部分 ---
+        st.markdown("<br><br>", unsafe_allow_html=True) # 预留上方Logo位置
+        st.markdown("<div style='text-align: center; color: #999;'>[ 此处预留公司 LOGO 位置 ]</div>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.text_input("请输入访问密码", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        st.text_input("密码错误，请重新输入", type="password", on_change=password_entered, key="password")
+        # 错误重试界面
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.text_input("密码错误，请重新输入", type="password", on_change=password_entered, key="password")
         return False
     else:
         return True
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎
+    # 1. 核心指标计算引擎 (保持不变)
     # ==========================================
     def get_max_drawdown_recovery_days(nav_series):
         if nav_series.empty or len(nav_series) < 2: return 0, "数据不足"
@@ -77,9 +88,9 @@ if check_password():
         }
 
     # ==========================================
-    # 2. UI 界面与侧边栏控制
+    # 2. UI 界面与侧边栏控制 (顺序保持: 成分 -> 权重 -> 时间)
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.20", page_icon="🏛️")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.21", page_icon="🏛️")
 
     st.sidebar.title("🏛️ 寻星控制台")
     uploaded_file = st.sidebar.file_uploader("📂 加载寻星配置底座 (xlsx)", type=["xlsx"])
@@ -94,12 +105,12 @@ if check_password():
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
         
-        # 2. 构建寻星配置组合 (我们要投什么)
+        # 2. 构建组合成分
         fund_pool = [c for c in all_cols if c != sel_bench]
         st.sidebar.subheader("🛠️ 构建寻星配置组合")
         sel_funds = st.sidebar.multiselect("挑选组合成分", fund_pool, default=[])
         
-        # 3. 比例分配 (具体分配比例)
+        # 3. 比例分配
         weights = {}
         if sel_funds:
             st.sidebar.markdown("#### ⚖️ 比例分配")
@@ -107,7 +118,7 @@ if check_password():
             for f in sel_funds:
                 weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
         
-        # 4. 时间跨度选择 (在什么时间段看)
+        # 4. 时间跨度选择
         st.sidebar.markdown("---")
         st.sidebar.subheader("📅 时间跨度选择")
         min_date = df_raw.index.min().to_pydatetime()
@@ -115,7 +126,6 @@ if check_password():
         start_date = st.sidebar.date_input("起始日期", min_date, min_value=min_date, max_value=max_date)
         end_date = st.sidebar.date_input("截止日期", max_date, min_value=min_date, max_value=max_date)
         
-        # 全局切片数据
         df_db = df_raw.loc[start_date:end_date].copy()
         
         star_nav = None
@@ -127,16 +137,14 @@ if check_password():
                 star_rets = (port_rets * norm_w).sum(axis=1)
                 star_nav = (1 + star_rets).cumprod()
                 star_nav.name = "寻星配置组合"
-                # 基准同步归一化
                 bench_sync = df_db.loc[star_nav.index, sel_bench]
                 bench_norm = bench_sync / (bench_sync.iloc[0] if not bench_sync.empty else 1)
 
         # ==========================================
-        # 3. 功能标签页
+        # 3. 功能标签页 (保持不变)
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 寻星配置底层产品分析", "🧩 权重与归因", "⚔️ 配置池产品分析"])
 
-        # --- Tab 1: 寻星配置组合全景图 ---
         with tabs[0]:
             if star_nav is not None:
                 st.subheader(f"📊 寻星配置组合全景图 ({start_date} 至 {end_date})")
@@ -157,7 +165,6 @@ if check_password():
             else:
                 st.info("👈 请在左侧侧边栏【挑选组合成分】并设置权重。")
 
-        # --- Tab 2: 寻星配置底层产品分析 ---
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置底层产品分析")
@@ -169,19 +176,16 @@ if check_password():
             else:
                 st.info("👈 请先勾选成分产品。")
 
-        # --- Tab 3: 权重与归因 ---
         with tabs[2]:
             if sel_funds:
                 cw1, cw2 = st.columns(2)
                 with cw1:
                     st.plotly_chart(px.pie(names=list(weights.keys()), values=list(weights.values()), hole=0.4, title="当前组合权重分布"), use_container_width=True)
                 with cw2:
-                    st.write("##### 权重明细")
                     st.table(pd.DataFrame.from_dict(weights, orient='index', columns=['所占比例']).style.format("{:.2%}"))
             else:
                 st.info("👈 请先勾选成分产品。")
 
-        # --- Tab 4: 配置池产品分析 ---
         with tabs[3]:
             st.subheader("⚔️ 配置池产品分析")
             compare_pool = st.multiselect("搜索并勾选池内产品", all_cols, default=[])
