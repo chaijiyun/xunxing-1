@@ -93,9 +93,10 @@ if check_password():
     # ==========================================
     # 2. UI 界面与侧边栏控制
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.22", page_icon="🏛️")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v2.23", page_icon="🏛️")
 
-    st.sidebar.title("🏛️ 寻星控制台")
+    # 精准修改此处标题：
+    st.sidebar.title("🏛️ 寻星配置分析系统")
     uploaded_file = st.sidebar.file_uploader("📂 加载寻星配置底座 (xlsx)", type=["xlsx"])
 
     if uploaded_file:
