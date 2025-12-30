@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # ==========================================
-# 0. 登录验证模块
+# 0. 登录验证模块 (逻辑保持完整)
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -149,7 +149,7 @@ if check_password():
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
-        # --- TAB 1: 全景图 ---
+        # --- TAB 1: 保持冻结 ---
         with tabs[0]:
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
@@ -174,27 +174,32 @@ if check_password():
 
                 fig_dd = go.Figure()
                 fig_dd.add_trace(go.Scatter(x=m['dd_series'].index, y=m['dd_series'], fill='tozeroy', mode='lines', line=dict(color='rgba(220, 38, 38, 0.8)', width=1), fillcolor='rgba(220, 38, 38, 0.3)'))
-                fig_dd.update_layout(title="水下时间分布（红色区域代表无新高区间）", yaxis_tickformat=".1%", template="plotly_white", height=250)
+                fig_dd.update_layout(title="水下时间分布", yaxis_tickformat=".1%", template="plotly_white", height=250)
                 st.plotly_chart(fig_dd, use_container_width=True)
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
 
-        # --- TAB 2: 穿透归因 (四饼图核心改动区) ---
+        # --- TAB 2: 穿透归因 (重排排版，恢复逻辑行数) ---
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                st.markdown("#### 1. 权重漂移、风险与收益归因对比")
                 
-                # 计算逻辑
+                # --- A. 饼图区域 (2x2 排布) ---
+                st.markdown("#### 1. 权重漂移分析")
                 df_sub_prices = df_db[sel_funds].dropna()
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
-                # 漂移后的最新权重
                 growth_factors = df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]
                 latest_values = initial_w_series * growth_factors
                 latest_w_series = latest_values / latest_values.sum()
-                
-                # 风险与收益贡献
+
+                col_w1, col_w2 = st.columns(2)
+                with col_w1:
+                    st.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
+                with col_w2:
+                    st.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
+
+                st.markdown("#### 2. 风险与收益贡献归因")
                 df_sub_rets = df_sub_prices.pct_change().fillna(0)
                 vol_list = df_sub_rets.std() * np.sqrt(252)
                 risk_vals = initial_w_series * vol_list
@@ -202,19 +207,15 @@ if check_password():
                 individual_rets = (df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]) - 1
                 contribution_vals = initial_w_series * individual_rets
 
-                # 布局呈现
-                ca, cb, cc, cd = st.columns(4)
-                with ca:
-                    st.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
-                with cb:
-                    st.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
-                with cc:
+                col_attr1, col_attr2 = st.columns(2)
+                with col_attr1:
                     st.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因"), use_container_width=True)
-                with cd:
+                with col_attr2:
                     st.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因"), use_container_width=True)
-                
+
+                # --- B. 走势图 ---
                 st.markdown("---")
-                st.markdown("#### 2. 底层产品走势对比")
+                st.markdown("#### 3. 底层产品走势对比")
                 df_sub_norm = df_sub_prices.div(df_sub_prices.iloc[0])
                 fig_sub_compare = go.Figure()
                 for col in df_sub_norm.columns:
@@ -224,26 +225,27 @@ if check_password():
                 fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_sub_compare, use_container_width=True)
                 
+                # --- C. 特征深度分析 (上下垂直排列) ---
                 st.markdown("---")
-                st.markdown("#### 3. 产品性格分布与相关性")
-                c_left, c_right = st.columns([1.2, 1])
-                with c_left:
-                    char_data = []
-                    for f in sel_funds:
-                        f_m = calculate_metrics(df_sub_prices[f], df_db[sel_bench])
-                        char_data.append({"产品": f, "上行捕获": f_m['上行捕获'], "下行捕获": f_m['下行捕获'], "年化收益": f_m['年化收益']})
-                    st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="年化收益", title="产品性格象限图"), use_container_width=True)
-                with c_right:
-                    st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', title="产品相关性矩阵"), use_container_width=True)
+                st.markdown("#### 4. 产品性格象限分布")
+                char_data = []
+                for f in sel_funds:
+                    f_m = calculate_metrics(df_sub_prices[f], df_db[sel_bench])
+                    char_data.append({"产品": f, "上行捕获": f_m['上行捕获'], "下行捕获": f_m['下行捕获'], "年化收益": f_m['年化收益']})
+                fig_char = px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="年化收益", height=600)
+                st.plotly_chart(fig_char, use_container_width=True)
+                
+                st.markdown("#### 5. 产品相关性矩阵")
+                fig_corr = px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600)
+                st.plotly_chart(fig_corr, use_container_width=True)
 
-        # --- TAB 3: 配置池分析 ---
+        # --- TAB 3: 保持冻结 ---
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
             compare_pool = st.multiselect("搜索池内产品", all_cols, default=[])
             if compare_pool:
                 is_aligned = st.checkbox("对齐共同起始日期比较", value=False)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
-                
                 if not df_comp.empty:
                     fig_comp_lines = go.Figure()
                     for col in compare_pool:
@@ -251,7 +253,7 @@ if check_password():
                         if not series.empty:
                             norm_series = series / series.iloc[0]
                             fig_comp_lines.add_trace(go.Scatter(x=norm_series.index, y=norm_series, name=col))
-                    fig_comp_lines.update_layout(title="配置池产品业绩走势对比", template="plotly_white", height=500)
+                    fig_comp_lines.update_layout(title="配置池产品业绩对比", template="plotly_white", height=500)
                     st.plotly_chart(fig_comp_lines, use_container_width=True)
                 
                 res_data = []
