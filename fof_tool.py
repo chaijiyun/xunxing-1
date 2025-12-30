@@ -81,16 +81,35 @@ if check_password():
             "夏普比率": sharpe, "索提诺比率": sortino, "卡玛比率": calmar, "年化波动率": vol,
             "最大回撤修复时间": mdd_rec, "最大无新高持续时间": max_nh,
             "正收益概率(日)": (returns > 0).sum() / len(returns),
-            "dd_series": dd_s
+            "dd_series": dd_s,
+            "Beta": 0.0, "Current_Beta": 0.0 # 初始化 Beta
         }
 
         if bench_nav is not None:
             b_sync = bench_nav.reindex(nav.index).ffill()
             b_rets = b_sync.pct_change().fillna(0)
+            
+            # 捕获比率计算
             up_mask, down_mask = b_rets > 0, b_rets < 0
             up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
             down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
-            metrics.update({"上行捕获": up_cap, "下行捕获": down_cap})
+            
+            # Beta 计算 (全周期)
+            cov_mat = np.cov(returns, b_rets)
+            beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
+            
+            # Rolling Beta (最近126个交易日/约半年)
+            window = 126
+            if len(returns) > window:
+                r_curr = returns.iloc[-window:]
+                b_curr = b_rets.iloc[-window:]
+                cov_curr = np.cov(r_curr, b_curr)
+                curr_beta = cov_curr[0, 1] / cov_curr[1, 1] if cov_curr.shape == (2, 2) and cov_curr[1, 1] != 0 else 0
+            else:
+                curr_beta = beta
+                
+            metrics.update({"上行捕获": up_cap, "下行捕获": down_cap, "Beta": beta, "Current_Beta": curr_beta})
+            
         return metrics
 
     # ==========================================
@@ -138,7 +157,7 @@ if check_password():
         with tabs[0]:
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
-                m = calculate_metrics(star_nav)
+                m = calculate_metrics(star_nav, bn_sync) # 传入基准以计算 Beta
                 
                 # 顶部核心指标卡
                 c_top = st.columns(7)
@@ -157,12 +176,18 @@ if check_password():
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 下方区域：风险体验 (已升级为 Metric 样式)
-                st.markdown("#### 🛡️ 风险体验")
-                c_risk = st.columns(3)
+                # 下方区域：风险体验 + 风格监控 (新增 Beta 指标)
+                st.markdown("#### 🛡️ 风险体验与风格监控")
+                c_risk = st.columns(4) # 改为4列
                 c_risk[0].metric("最大回撤修复时间", m['最大回撤修复时间'])
                 c_risk[1].metric("最大无新高持续时间", m['最大无新高持续时间'])
                 c_risk[2].metric("日度正收益概率", f"{m['正收益概率(日)']:.1%}")
+                c_risk[3].metric("当前 Beta (近半年)", f"{m['Current_Beta']:.2f}", delta_color="off")
+                
+                # 风格漂移预警逻辑
+                beta_drift = abs(m['Current_Beta'] - m['Beta'])
+                if beta_drift > 0.1:
+                    st.warning(f"⚠️ **风格漂移预警**：当前 Beta ({m['Current_Beta']:.2f}) 与全周期均值 ({m['Beta']:.2f}) 偏差 {beta_drift:.2f} (超过阈值 0.1)，建议检查是否需要执行季度调仓！")
 
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
