@@ -57,10 +57,8 @@ if check_password():
         mdd = (nav / cummax - 1).min()
         vol = returns.std() * np.sqrt(252)
         
-        # 风险指标
         rf = 0.02
         sharpe = (ann_ret - rf) / vol if vol > 0 else 0
-        # 新增：索提诺比率计算
         downside_returns = returns[returns < 0]
         downside_std = downside_returns.std() * np.sqrt(252)
         sortino = (ann_ret - rf) / downside_std if downside_std > 0 else 0
@@ -154,7 +152,6 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                
                 st.markdown("#### 1. 初始配置与风险贡献")
                 ca1, ca2 = st.columns(2)
                 with ca1:
@@ -207,23 +204,35 @@ if check_password():
                 
                 st.markdown("#### 4. 产品相关性矩阵")
                 st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600), use_container_width=True)
-            else:
-                st.info("👈 请在左侧挑选成分。")
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
             compare_pool = st.multiselect("搜索池内产品", all_cols, default=[])
+            
             if compare_pool:
-                df_comp = df_db[compare_pool].dropna()
-                # 修复/增加：配置池多产品走势图
-                fig_comp_lines = px.line(df_comp.div(df_comp.iloc[0]), title="配置池产品业绩走势对比")
-                fig_comp_lines.update_layout(template="plotly_white", hovermode="x unified", height=500)
-                st.plotly_chart(fig_comp_lines, use_container_width=True)
+                # 🛠️ 新增：是否对齐起始日期的选项
+                is_aligned = st.checkbox("对齐共同起始日期比较（勾选则只显示所有产品成立后的交集时段）", value=False)
                 
-                # 指标展示
+                if is_aligned:
+                    df_comp = df_db[compare_pool].dropna()
+                else:
+                    df_comp = df_db[compare_pool] # 保留各自原始时间点
+                
+                if not df_comp.empty:
+                    fig_comp_lines = go.Figure()
+                    for col in compare_pool:
+                        series = df_comp[col].dropna() # 针对单个产品去掉各自的空值
+                        if not series.empty:
+                            norm_series = series / series.iloc[0]
+                            fig_comp_lines.add_trace(go.Scatter(x=norm_series.index, y=norm_series, name=col))
+                    
+                    fig_comp_lines.update_layout(title="配置池产品业绩走势对比", template="plotly_white", hovermode="x unified", height=500)
+                    st.plotly_chart(fig_comp_lines, use_container_width=True)
+                
+                # 指标展示 (指标计算逻辑保持不变，依然基于各自的有效日期)
                 res_data = []
                 for col in compare_pool:
-                    metrics = calculate_metrics(df_comp[col])
+                    metrics = calculate_metrics(df_db[col])
                     res_data.append({
                         "产品名称": col,
                         "总收益率": f"{metrics['总收益率']:.2%}",
