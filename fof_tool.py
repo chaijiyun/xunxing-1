@@ -30,21 +30,44 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎
+    # 1. 核心指标计算引擎 (新增回撤细节计算)
     # ==========================================
-    def get_max_drawdown_recovery_days(nav_series):
-        if nav_series.empty or len(nav_series) < 2: return 0, "数据不足"
+    def get_drawdown_details(nav_series):
+        """计算最大回撤修复天数和新高最大间隔天数"""
+        if nav_series.empty or len(nav_series) < 2: 
+            return "数据不足", "数据不足"
+        
         cummax = nav_series.cummax()
         drawdown = (nav_series / cummax) - 1
-        if drawdown.min() == 0: return 0, "无回撤"
-        mdd_date = drawdown.idxmin()
-        peak_val = cummax.loc[mdd_date]
-        post_mdd_data = nav_series.loc[mdd_date:]
-        recovery_mask = post_mdd_data >= peak_val
-        if recovery_mask.any():
-            recover_date = recovery_mask.idxmax()
-            return (recover_date - mdd_date).days, f"{(recover_date - mdd_date).days}天"
-        return 9999, "尚未修复"
+        
+        # A. 计算最大回撤修复天数
+        mdd_val = drawdown.min()
+        if mdd_val == 0:
+            mdd_recovery = "无回撤"
+        else:
+            mdd_date = drawdown.idxmin()
+            # 找到发生该回撤前的最高点日期
+            peak_before_mdd = nav_series.loc[:mdd_date].idxmax()
+            peak_val = nav_series.loc[peak_before_mdd]
+            # 寻找修复日期
+            post_mdd_data = nav_series.loc[mdd_date:]
+            recovery_mask = post_mdd_data >= peak_val
+            if recovery_mask.any():
+                recovery_date = recovery_mask.idxmax()
+                mdd_recovery = f"{(recovery_date - peak_before_mdd).days}天"
+            else:
+                mdd_recovery = "尚未修复"
+
+        # B. 计算新高最大间隔天数 (Max Days Between Peaks)
+        is_new_high = nav_series == cummax
+        high_dates = is_new_high[is_new_high].index
+        if len(high_dates) > 1:
+            intervals = (high_dates[1:] - high_dates[:-1]).days
+            max_interval = f"{intervals.max()}天"
+        else:
+            max_interval = f"{(nav_series.index[-1] - nav_series.index[0]).days}天"
+            
+        return mdd_recovery, max_interval
 
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
@@ -59,17 +82,19 @@ if check_password():
         rf, sharpe = 0.02, 0
         if vol > 0: sharpe = (ann_ret - rf) / vol
         calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
-        rep_v, rep_s = get_max_drawdown_recovery_days(nav)
         tuw_ratio = (nav < cummax).sum() / len(nav)
+        
+        # 获取回撤深度指标
+        mdd_recovery, max_peak_interval = get_drawdown_details(nav)
         
         metrics = {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
             "夏普比率": sharpe, "卡玛比率": calmar, "年化波动率": vol, 
-            "回撤修复天数": rep_s, "水下时间": tuw_ratio
+            "最大回撤修复": mdd_recovery, "新高最大间隔": max_peak_interval,
+            "水下时间占比": tuw_ratio
         }
 
         if bench_nav is not None:
-            # 确保基准与净值日期对齐
             b_sync = bench_nav.reindex(nav.index).ffill()
             b_rets = b_sync.pct_change().fillna(0)
             up_mask, down_mask = b_rets > 0, b_rets < 0
@@ -79,7 +104,7 @@ if check_password():
         return metrics
 
     # ==========================================
-    # 2. UI 界面与侧边栏
+    # 2. UI 界面
     # ==========================================
     st.set_page_config(layout="wide", page_title="寻星配置分析系统", page_icon="🏛️")
     st.sidebar.title("🏛️ 寻星配置分析系统")
@@ -119,7 +144,7 @@ if check_password():
                 bench_norm = bench_sync / bench_sync.iloc[0]
 
         # ==========================================
-        # 3. 标签页布局
+        # 3. 标签页
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
@@ -127,14 +152,15 @@ if check_password():
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
                 m = calculate_metrics(star_nav)
-                c = st.columns(7)
-                c[0].metric("总收益率", f"{m['总收益率']:.2%}")
+                c = st.columns(8) # 增加到 8 列
+                c[0].metric("区间收益率", f"{m['总收益率']:.2%}")
                 c[1].metric("年化收益", f"{m['年化收益']:.2%}")
                 c[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
-                c[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
-                c[4].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-                c[5].metric("修复天数", m['回撤修复天数'])
-                c[6].metric("水下时间", f"{m['水下时间']:.1%}")
+                c[3].metric("最大回撤修复", m['最大回撤修复'])
+                c[4].metric("新高最大间隔", m['新高最大间隔'])
+                c[5].metric("夏普比率", f"{m['夏普比率']:.2f}")
+                c[6].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
+                c[7].metric("水下时间", f"{m['水下时间占比']:.1%}")
                 
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
@@ -147,8 +173,6 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                
-                # 第一部分
                 st.markdown("#### 1. 初始配置与风险贡献")
                 ca1, ca2 = st.columns(2)
                 with ca1:
@@ -161,59 +185,41 @@ if check_password():
                     risk_pct = {k: v/total_r for k, v in risk_contrib.items()}
                     st.plotly_chart(px.pie(names=list(risk_pct.keys()), values=list(risk_pct.values()), hole=0.4, title="风险贡献归因"), use_container_width=True)
                 
-                # 第二部分：修正后的绘图逻辑
                 st.markdown("---")
                 st.markdown("#### 2. 底层产品走势对比")
                 df_sub = df_db[sel_funds].dropna()
                 df_sub_norm = df_sub.div(df_sub.iloc[0])
-                
                 fig_sub_compare = go.Figure()
-                # 修复 opacity 报错：将 opacity 从 line 字典中移出
                 for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(
-                        x=df_sub_norm.index, 
-                        y=df_sub_norm[col], 
-                        name=col, 
-                        opacity=0.6,
-                        line=dict(width=1.5)
-                    ))
-                
+                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(width=1.5)))
                 if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(
-                        x=star_nav.index, 
-                        y=star_nav, 
-                        name="寻星配置组合", 
-                        line=dict(color='red', width=4)
-                    ))
-                
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_sub_compare, use_container_width=True)
                 
-                # 第三部分
                 st.markdown("---")
                 st.markdown("#### 3. 产品性格分布图")
-                char_data = []
-                for f in sel_funds:
-                    f_m = calculate_metrics(df_sub[f], df_db[sel_bench])
-                    char_data.append({"产品": f, "上行捕获": f_m['上行捕获'], "下行捕获": f_m['下行捕获'], "年化收益": f_m['年化收益']})
+                char_data = [{"产品": f, "上行捕获": calculate_metrics(df_sub[f], df_db[sel_bench])['上行捕获'], 
+                             "下行捕获": calculate_metrics(df_sub[f], df_db[sel_bench])['下行捕获'], 
+                             "年化收益": calculate_metrics(df_sub[f])['年化收益']} for f in sel_funds]
                 df_char = pd.DataFrame(char_data)
-                fig_char = px.scatter(df_char, x="下行捕获", y="上行捕获", size=df_char["年化收益"].clip(lower=0.01), 
-                                     text="产品", color="年化收益", color_continuous_scale='Viridis', height=600)
+                fig_char = px.scatter(df_char, x="下行捕获", y="上行捕获", size=df_char["年化收益"].clip(lower=0.01), text="产品", color="年化收益", color_continuous_scale='Viridis', height=600)
                 fig_char.add_vline(x=1.0, line_dash="dash"); fig_char.add_hline(y=1.0, line_dash="dash")
                 st.plotly_chart(fig_char, use_container_width=True)
                 
                 st.markdown("#### 4. 产品相关性矩阵")
                 st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600), use_container_width=True)
-            else:
-                st.info("👈 请在左侧挑选成分。")
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
-            compare_pool = st.multiselect("搜索池内产品", all_cols, default=[])
+            compare_pool = st.multiselect("搜索并勾选池内产品", all_cols, default=[])
             if compare_pool:
                 df_comp = df_db[compare_pool].dropna()
                 st.plotly_chart(px.line(df_comp.div(df_comp.iloc[0]), title="业绩对比走势"), use_container_width=True)
-                res = [dict(calculate_metrics(df_comp[col]), **{"产品名称": col}) for col in compare_pool]
+                # 列表同步新增指标
+                res = []
+                for col in compare_pool:
+                    m = calculate_metrics(df_comp[col])
+                    m["产品名称"] = col
+                    res.append(m)
                 st.dataframe(pd.DataFrame(res).set_index('产品名称'), use_container_width=True)
-    else:
-        st.info("👋 请上传‘产品数据库’开始分析。")
