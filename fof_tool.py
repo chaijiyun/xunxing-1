@@ -39,7 +39,7 @@ if check_password():
         cummax = nav_series.cummax()
         drawdown = (nav_series / cummax) - 1
         
-        # 1. 最大回撤修复时间
+        # 1. 最大回撤修复时间 (针对 MDD 的修复)
         mdd_val = drawdown.min()
         if mdd_val == 0:
             mdd_recovery = "无回撤"
@@ -90,7 +90,7 @@ if check_password():
         metrics = {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
             "夏普比率": sharpe, "索提诺比率": sortino, "卡玛比率": calmar, "年化波动率": vol, 
-            "回撤修复时间": mdd_recovery, "无新高持续时间": max_no_new_high, "水下时间": tuw_ratio,
+            "最大回撤修复时间": mdd_recovery, "最大无新高持续时间": max_no_new_high, "水下时间": tuw_ratio,
             "dd_series": dd_series
         }
 
@@ -160,18 +160,18 @@ if check_password():
                 c[4].metric("索提诺", f"{m['索提诺比率']:.2f}")
                 c[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
                 c[6].metric("年化波动", f"{m['年化波动率']:.2%}")
-                c[7].metric("回撤修复", m['回撤修复时间'])
-                c[8].metric("无新高期", m['无新高持续时间'])
+                c[7].metric("最大回撤修复", m['最大回撤修复时间']) # 文字标签已更新
+                c[8].metric("最大无新高", m['最大无新高持续时间']) # 文字标签已更新
                 c[9].metric("水下时间", f"{m['水下时间']:.1%}")
                 
-                # 净值走势图
+                # 累计净值走势图
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_main.add_trace(go.Scatter(x=bench_norm.index, y=bench_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 🚀 新增：水下时间分布图（回撤区域图）
+                # 水下时间分布图
                 fig_dd = go.Figure()
                 fig_dd.add_trace(go.Scatter(
                     x=m['dd_series'].index, y=m['dd_series'],
@@ -180,7 +180,7 @@ if check_password():
                     fillcolor='rgba(220, 38, 38, 0.3)'
                 ))
                 fig_dd.update_layout(
-                    title="水下时间分布（红色区域代表无新高区间）",
+                    title="水下时间分布（红色区域代表无新高区间，最宽阴影对应最大无新高持续时间）",
                     yaxis_tickformat=".1%",
                     template="plotly_white",
                     height=250,
@@ -261,8 +261,8 @@ if check_password():
                         "夏普比率": round(metrics['夏普比率'], 2),
                         "索提诺": round(metrics['索提诺比率'], 2),
                         "卡玛比率": round(metrics['卡玛比率'], 2),
-                        "回撤修复时间": metrics['回撤修复时间'],
-                        "最大无新高": metrics['无新高持续时间'],
+                        "最大回撤修复": metrics['最大回撤修复时间'], # 文字标签已更新
+                        "最大无新高": metrics['最大无新高持续时间'], # 文字标签已更新
                         "年化波动": f"{metrics['年化波动率']:.2%}"
                     })
                 st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
