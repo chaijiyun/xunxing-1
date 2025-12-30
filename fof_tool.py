@@ -57,11 +57,15 @@ if check_password():
         return mdd_recovery, max_no_new_high, drawdown
 
     def calc_win_prob(nav, days):
-        """计算滚动持有n天的盈利概率"""
+        """核心逻辑修正：计算任意一点买入，持有N个交易日后的盈利概率"""
         if len(nav) <= days: return 0.0
-        diff = nav.shift(-days) / nav - 1
-        win_prob = (diff.dropna() > 0).sum() / len(diff.dropna())
-        return win_prob
+        # 使用 diff 计算：(N天后的价格 / 当前价格) - 1
+        # 用 shift(-days) 将未来的价格对齐到当前行
+        future_nav = nav.shift(-days)
+        returns = (future_nav / nav) - 1
+        valid_returns = returns.dropna()
+        if len(valid_returns) == 0: return 0.0
+        return (valid_returns > 0).sum() / len(valid_returns)
 
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
@@ -76,7 +80,9 @@ if check_password():
         
         rf = 0.02
         sharpe = (ann_ret - rf) / vol if vol > 0 else 0
-        downside_std = returns[returns < 0].std() * np.sqrt(252)
+        # 修正索提诺比率计算逻辑
+        downside_returns = returns[returns < 0]
+        downside_std = downside_returns.std() * np.sqrt(252) if not downside_returns.empty else 0.0001
         sortino = (ann_ret - rf) / downside_std if downside_std > 0 else 0
         calmar = ann_ret / abs(mdd) if mdd != 0 else 0
         
@@ -150,7 +156,6 @@ if check_password():
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
                 m = calculate_metrics(star_nav)
-                # 顶部指标卡 (移除了体验类指标，保持纯收益风险维度)
                 c_top = st.columns(7)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -166,7 +171,6 @@ if check_password():
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 下方区域：左侧回撤体验，右侧胜率拆解
                 st.markdown("#### 🛡️ 风险体验与持有盈利概率")
                 c_risk, c_win = st.columns([1, 1.5])
                 with c_risk:
@@ -215,8 +219,11 @@ if check_password():
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
                 st.markdown("---")
-                char_data = [calculate_metrics(df_sub_prices[f], df_db[sel_bench]) for f in sel_funds]
-                for i, f in enumerate(sel_funds): char_data[i]['产品'] = f
+                char_data = []
+                for f in sel_funds:
+                    f_metrics = calculate_metrics(df_sub_prices[f], df_db[sel_bench])
+                    f_metrics['产品'] = f
+                    char_data.append(f_metrics)
                 st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="年化收益", title="产品性格象限分布", height=600), use_container_width=True)
                 st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', title="产品相关性矩阵", height=600), use_container_width=True)
 
@@ -236,7 +243,13 @@ if check_password():
                 res_data = []
                 for col in compare_pool:
                     k = calculate_metrics(df_db[col])
-                    res_data.append({"产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), "索提诺": round(k['索提诺比率'], 2), "波动": f"{k['年化波动率']:.2%}", "3M胜率": f"{k['持有3月胜率']:.1%}", "6M胜率": f"{k['持有6月胜率']:.1%}", "12M胜率": f"{k['持有12月胜率']:.1%}"})
+                    res_data.append({
+                        "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", 
+                        "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
+                        "波动": f"{k['年化波动率']:.2%}", "3M胜率": f"{k['持有3月胜率']:.1%}", 
+                        "6M胜率": f"{k['持有6月胜率']:.1%}", "12M胜率": f"{k['持有12月胜率']:.1%}",
+                        "24M胜率": f"{k['持有24月胜率']:.1%}", "至今胜率": f"{k['持有至今胜率']:.1%}"
+                    })
                 st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
     else:
         st.info("👋 请上传‘产品数据库’。")
