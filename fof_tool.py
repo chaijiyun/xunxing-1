@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # ==========================================
-# 0. 登录验证模块 (完全保留)
+# 0. 登录验证模块
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -56,15 +56,6 @@ if check_password():
             max_no_new_high = f"{max(intervals.max(), last_gap) if len(intervals)>0 else last_gap}天"
         return mdd_recovery, max_no_new_high, drawdown
 
-    def calc_win_prob(nav, days):
-        """滚动盈利概率核心计算逻辑"""
-        if len(nav) <= days: return 0.0
-        future_nav = nav.shift(-days)
-        returns = (future_nav / nav) - 1
-        valid_returns = returns.dropna()
-        if len(valid_returns) == 0: return 0.0
-        return (valid_returns > 0).sum() / len(valid_returns)
-
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
         if len(nav) < 2: return {}
@@ -90,11 +81,6 @@ if check_password():
             "夏普比率": sharpe, "索提诺比率": sortino, "卡玛比率": calmar, "年化波动率": vol,
             "最大回撤修复时间": mdd_rec, "最大无新高持续时间": max_nh,
             "正收益概率(日)": (returns > 0).sum() / len(returns),
-            "持有3月胜率": calc_win_prob(nav, 63),
-            "持有6月胜率": calc_win_prob(nav, 126),
-            "持有12月胜率": calc_win_prob(nav, 252),
-            "持有24月胜率": calc_win_prob(nav, 504),
-            "持有至今胜率": ((nav.iloc[-1] > nav.iloc[:-1]).sum() / (len(nav)-1)) if len(nav)>1 else 0,
             "dd_series": dd_s
         }
 
@@ -153,6 +139,7 @@ if check_password():
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
                 m = calculate_metrics(star_nav)
+                
                 # 顶部核心指标卡
                 c_top = st.columns(7)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
@@ -170,19 +157,16 @@ if check_password():
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 下方区域：风险体验 + 胜率拆解 (已移除水下时间指标与分布图)
-                st.markdown("#### 🛡️ 风险体验与持有盈利概率")
-                c_risk, c_win = st.columns([1, 1.5])
-                with c_risk:
+                # 下方区域：仅保留风险体验数据，横向排布
+                st.markdown("#### 🛡️ 风险体验")
+                c_risk1, c_risk2, c_risk3 = st.columns(3)
+                with c_risk1:
                     st.write(f"最大回撤修复时间: **{m['最大回撤修复时间']}**")
+                with c_risk2:
                     st.write(f"最大无新高持续时间: **{m['最大无新高持续时间']}**")
+                with c_risk3:
                     st.write(f"日度正收益概率: **{m['正收益概率(日)']:.1%}**")
-                with c_win:
-                    win_df = pd.DataFrame({
-                        "持有期限": ["3个月", "6个月", "12个月", "24个月", "持有至今"],
-                        "盈利概率": [f"{m['持有3月胜率']:.1%}", f"{m['持有6月胜率']:.1%}", f"{m['持有12月胜率']:.1%}", f"{m['持有24月胜率']:.1%}", f"{m['持有至今胜率']:.1%}"]
-                    })
-                    st.table(win_df)
+
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
 
@@ -246,10 +230,9 @@ if check_password():
                     res_data.append({
                         "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", 
                         "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
-                        "波动": f"{k['年化波动率']:.2%}", "3M胜率": f"{k['持有3月胜率']:.1%}", 
-                        "6M胜率": f"{k['持有6月胜率']:.1%}", "12M胜率": f"{k['持有12月胜率']:.1%}",
-                        "24M胜率": f"{k['持有24月胜率']:.1%}", "至今胜率": f"{k['持有至今胜率']:.1%}"
+                        "索提诺": round(k['索提诺比率'], 2), "卡玛": round(k['卡玛比率'], 2), 
+                        "波动": f"{k['年化波动率']:.2%}", "修复": k['最大回撤修复时间'], "无新高": k['最大无新高持续时间']
                     })
                 st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
     else:
-        st.info("👋 请上传‘产品数据库’开始分析。")
+        st.info("👋 请上传‘产品数据库’。")
