@@ -30,7 +30,7 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎 (新增回撤细节计算)
+    # 1. 核心指标计算引擎
     # ==========================================
     def get_drawdown_details(nav_series):
         """计算最大回撤修复天数和新高最大间隔天数"""
@@ -40,16 +40,14 @@ if check_password():
         cummax = nav_series.cummax()
         drawdown = (nav_series / cummax) - 1
         
-        # A. 计算最大回撤修复天数
+        # A. 最大回撤修复天数
         mdd_val = drawdown.min()
         if mdd_val == 0:
             mdd_recovery = "无回撤"
         else:
             mdd_date = drawdown.idxmin()
-            # 找到发生该回撤前的最高点日期
             peak_before_mdd = nav_series.loc[:mdd_date].idxmax()
             peak_val = nav_series.loc[peak_before_mdd]
-            # 寻找修复日期
             post_mdd_data = nav_series.loc[mdd_date:]
             recovery_mask = post_mdd_data >= peak_val
             if recovery_mask.any():
@@ -58,7 +56,7 @@ if check_password():
             else:
                 mdd_recovery = "尚未修复"
 
-        # B. 计算新高最大间隔天数 (Max Days Between Peaks)
+        # B. 新高最大间隔天数
         is_new_high = nav_series == cummax
         high_dates = is_new_high[is_new_high].index
         if len(high_dates) > 1:
@@ -72,43 +70,53 @@ if check_password():
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
         if len(nav) < 2: return {}
+        
+        # 基础收益计算
         total_ret = (nav.iloc[-1] / nav.iloc[0]) - 1
         days = (nav.index[-1] - nav.index[0]).days
         ann_ret = (nav.iloc[-1] / nav.iloc[0]) ** (365.25 / max(days, 1)) - 1
         returns = nav.pct_change().fillna(0)
+        
+        # 风险指标
         cummax = nav.cummax()
         mdd = (nav / cummax - 1).min()
         vol = returns.std() * np.sqrt(252)
-        rf, sharpe = 0.02, 0
-        if vol > 0: sharpe = (ann_ret - rf) / vol
-        calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
-        tuw_ratio = (nav < cummax).sum() / len(nav)
         
-        # 获取回撤深度指标
-        mdd_recovery, max_peak_interval = get_drawdown_details(nav)
+        # 风险调整后收益
+        rf = 0.02
+        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
+        calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
+        
+        # 索提诺比率 (Sortino Ratio)
+        downside_returns = returns[returns < 0]
+        downside_std = downside_returns.std() * np.sqrt(252)
+        sortino = (ann_ret - rf) / downside_std if downside_std > 0 else 0
+        
+        mdd_rec, max_peak_int = get_drawdown_details(nav)
+        tuw_ratio = (nav < cummax).sum() / len(nav)
         
         metrics = {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
-            "夏普比率": sharpe, "卡玛比率": calmar, "年化波动率": vol, 
-            "最大回撤修复": mdd_recovery, "新高最大间隔": max_peak_interval,
-            "水下时间占比": tuw_ratio
+            "夏普比率": sharpe, "索提诺比率": sortino, "卡玛比率": calmar, 
+            "年化波动": vol, "回撤修复": mdd_rec, "新高间隔": max_peak_int,
+            "水下占比": tuw_ratio
         }
 
         if bench_nav is not None:
             b_sync = bench_nav.reindex(nav.index).ffill()
             b_rets = b_sync.pct_change().fillna(0)
             up_mask, down_mask = b_rets > 0, b_rets < 0
-            up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
-            down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
-            metrics.update({"上行捕获": up_cap, "下行捕获": down_cap})
+            metrics["上行捕获"] = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
+            metrics["下行捕获"] = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
+            
         return metrics
 
     # ==========================================
-    # 2. UI 界面
+    # 2. UI 界面与侧边栏
     # ==========================================
     st.set_page_config(layout="wide", page_title="寻星配置分析系统", page_icon="🏛️")
     st.sidebar.title("🏛️ 寻星配置分析系统")
-    uploaded_file = st.sidebar.file_uploader("📂 请上传产品数据库", type=["xlsx"])
+    uploaded_file = st.sidebar.file_uploader("📂 请上传寻星配置数据库", type=["xlsx"])
 
     if uploaded_file:
         df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
@@ -144,7 +152,7 @@ if check_password():
                 bench_norm = bench_sync / bench_sync.iloc[0]
 
         # ==========================================
-        # 3. 标签页
+        # 3. 标签页布局
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
@@ -152,15 +160,16 @@ if check_password():
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
                 m = calculate_metrics(star_nav)
-                c = st.columns(8) # 增加到 8 列
-                c[0].metric("区间收益率", f"{m['总收益率']:.2%}")
+                c = st.columns(9)
+                c[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c[1].metric("年化收益", f"{m['年化收益']:.2%}")
                 c[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
-                c[3].metric("最大回撤修复", m['最大回撤修复'])
-                c[4].metric("新高最大间隔", m['新高最大间隔'])
-                c[5].metric("夏普比率", f"{m['夏普比率']:.2f}")
-                c[6].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-                c[7].metric("水下时间", f"{m['水下时间占比']:.1%}")
+                c[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
+                c[4].metric("索提诺", f"{m['索提诺比率']:.2f}")
+                c[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
+                c[6].metric("修复天数", m['回撤修复'])
+                c[7].metric("新高间隔", m['新高间隔'])
+                c[8].metric("水下时间", f"{m['水下占比']:.1%}")
                 
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
@@ -173,7 +182,6 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                st.markdown("#### 1. 初始配置与风险贡献")
                 ca1, ca2 = st.columns(2)
                 with ca1:
                     st.plotly_chart(px.pie(names=list(weights.keys()), values=list(weights.values()), hole=0.4, title="资金权重分配"), use_container_width=True)
@@ -182,11 +190,10 @@ if check_password():
                     vol_list = df_sub_rets.std() * np.sqrt(252)
                     risk_contrib = {f: weights[f] * vol_list[f] for f in sel_funds}
                     total_r = sum(risk_contrib.values()) if sum(risk_contrib.values()) > 0 else 1
-                    risk_pct = {k: v/total_r for k, v in risk_contrib.items()}
-                    st.plotly_chart(px.pie(names=list(risk_pct.keys()), values=list(risk_pct.values()), hole=0.4, title="风险贡献归因"), use_container_width=True)
+                    st.plotly_chart(px.pie(names=list(risk_contrib.keys()), values=list(risk_contrib.values()), hole=0.4, title="风险贡献归因"), use_container_width=True)
                 
                 st.markdown("---")
-                st.markdown("#### 2. 底层产品走势对比")
+                st.markdown("#### 底层产品走势对比")
                 df_sub = df_db[sel_funds].dropna()
                 df_sub_norm = df_sub.div(df_sub.iloc[0])
                 fig_sub_compare = go.Figure()
@@ -197,18 +204,10 @@ if check_password():
                 fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_sub_compare, use_container_width=True)
                 
-                st.markdown("---")
-                st.markdown("#### 3. 产品性格分布图")
-                char_data = [{"产品": f, "上行捕获": calculate_metrics(df_sub[f], df_db[sel_bench])['上行捕获'], 
-                             "下行捕获": calculate_metrics(df_sub[f], df_db[sel_bench])['下行捕获'], 
-                             "年化收益": calculate_metrics(df_sub[f])['年化收益']} for f in sel_funds]
-                df_char = pd.DataFrame(char_data)
-                fig_char = px.scatter(df_char, x="下行捕获", y="上行捕获", size=df_char["年化收益"].clip(lower=0.01), text="产品", color="年化收益", color_continuous_scale='Viridis', height=600)
-                fig_char.add_vline(x=1.0, line_dash="dash"); fig_char.add_hline(y=1.0, line_dash="dash")
-                st.plotly_chart(fig_char, use_container_width=True)
-                
-                st.markdown("#### 4. 产品相关性矩阵")
-                st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600), use_container_width=True)
+                st.markdown("#### 产品相关性矩阵")
+                st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+            else:
+                st.info("👈 请在左侧挑选成分。")
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
@@ -216,10 +215,24 @@ if check_password():
             if compare_pool:
                 df_comp = df_db[compare_pool].dropna()
                 st.plotly_chart(px.line(df_comp.div(df_comp.iloc[0]), title="业绩对比走势"), use_container_width=True)
-                # 列表同步新增指标
-                res = []
+                
+                # 构建百分比显示的表格
+                res_data = []
                 for col in compare_pool:
                     m = calculate_metrics(df_comp[col])
-                    m["产品名称"] = col
-                    res.append(m)
-                st.dataframe(pd.DataFrame(res).set_index('产品名称'), use_container_width=True)
+                    res_data.append({
+                        "产品名称": col,
+                        "总收益率": f"{m['总收益率']:.2%}",
+                        "年化收益": f"{m['年化收益']:.2%}",
+                        "最大回撤": f"{m['最大回撤']:.2%}",
+                        "夏普比率": round(m['夏普比率'], 2),
+                        "索提诺": round(m['索提诺比率'], 2),
+                        "卡玛比率": round(m['卡玛比率'], 2),
+                        "年化波动": f"{m['年化波动']:.2%}",
+                        "回撤修复": m['回撤修复'],
+                        "新高间隔": m['新高间隔'],
+                        "水下时间": f"{m['水下占比']:.1%}"
+                    })
+                st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
+    else:
+        st.info("👋 请上传‘寻星配置数据库’开始分析。")
