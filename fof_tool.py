@@ -32,19 +32,39 @@ if check_password():
     # ==========================================
     # 1. 核心指标计算引擎
     # ==========================================
-    def get_max_drawdown_recovery_days(nav_series):
-        if nav_series.empty or len(nav_series) < 2: return 0, "数据不足"
+    def get_drawdown_details(nav_series):
+        if nav_series.empty or len(nav_series) < 2: 
+            return "数据不足", "数据不足", pd.Series()
+        
         cummax = nav_series.cummax()
         drawdown = (nav_series / cummax) - 1
-        if drawdown.min() == 0: return 0, "无回撤"
-        mdd_date = drawdown.idxmin()
-        peak_val = cummax.loc[mdd_date]
-        post_mdd_data = nav_series.loc[mdd_date:]
-        recovery_mask = post_mdd_data >= peak_val
-        if recovery_mask.any():
-            recover_date = recovery_mask.idxmax()
-            return (recover_date - mdd_date).days, f"{(recover_date - mdd_date).days}天"
-        return 9999, "尚未修复"
+        
+        # 1. 最大回撤修复时间
+        mdd_val = drawdown.min()
+        if mdd_val == 0:
+            mdd_recovery = "无回撤"
+        else:
+            mdd_date = drawdown.idxmin()
+            peak_val_at_mdd = cummax.loc[mdd_date]
+            post_mdd_data = nav_series.loc[mdd_date:]
+            recovery_mask = post_mdd_data >= peak_val_at_mdd
+            if recovery_mask.any():
+                recover_date = recovery_mask.idxmax()
+                mdd_recovery = f"{(recover_date - mdd_date).days}天"
+            else:
+                mdd_recovery = "尚未修复"
+        
+        # 2. 最大无新高持续时间
+        is_at_new_high = (nav_series == cummax)
+        high_dates = nav_series[is_at_new_high].index
+        if len(high_dates) < 2:
+            max_no_new_high = f"{(nav_series.index[-1] - nav_series.index[0]).days}天"
+        else:
+            intervals = (high_dates[1:] - high_dates[:-1]).days
+            last_gap = (nav_series.index[-1] - high_dates[-1]).days
+            max_no_new_high = f"{max(intervals.max(), last_gap) if len(intervals)>0 else last_gap}天"
+            
+        return mdd_recovery, max_no_new_high, drawdown
 
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
@@ -64,13 +84,14 @@ if check_password():
         sortino = (ann_ret - rf) / downside_std if downside_std > 0 else 0
         
         calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
-        rep_v, rep_s = get_max_drawdown_recovery_days(nav)
+        mdd_recovery, max_no_new_high, dd_series = get_drawdown_details(nav)
         tuw_ratio = (nav < cummax).sum() / len(nav)
         
         metrics = {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
             "夏普比率": sharpe, "索提诺比率": sortino, "卡玛比率": calmar, "年化波动率": vol, 
-            "回撤修复天数": rep_s, "水下时间": tuw_ratio
+            "回撤修复时间": mdd_recovery, "无新高持续时间": max_no_new_high, "水下时间": tuw_ratio,
+            "dd_series": dd_series
         }
 
         if bench_nav is not None:
@@ -131,21 +152,41 @@ if check_password():
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
                 m = calculate_metrics(star_nav)
-                c = st.columns(8)
+                c = st.columns(10)
                 c[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c[1].metric("年化收益", f"{m['年化收益']:.2%}")
                 c[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
                 c[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
                 c[4].metric("索提诺", f"{m['索提诺比率']:.2f}")
                 c[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-                c[6].metric("修复天数", m['回撤修复天数'])
-                c[7].metric("水下时间", f"{m['水下时间']:.1%}")
+                c[6].metric("年化波动", f"{m['年化波动率']:.2%}")
+                c[7].metric("回撤修复", m['回撤修复时间'])
+                c[8].metric("无新高期", m['无新高持续时间'])
+                c[9].metric("水下时间", f"{m['水下时间']:.1%}")
                 
+                # 净值走势图
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_main.add_trace(go.Scatter(x=bench_norm.index, y=bench_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
-                fig_main.update_layout(template="plotly_white", hovermode="x unified", height=500)
+                fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
+
+                # 🚀 新增：水下时间分布图（回撤区域图）
+                fig_dd = go.Figure()
+                fig_dd.add_trace(go.Scatter(
+                    x=m['dd_series'].index, y=m['dd_series'],
+                    fill='tozeroy', mode='lines', name='回撤深度',
+                    line=dict(color='rgba(220, 38, 38, 0.8)', width=1),
+                    fillcolor='rgba(220, 38, 38, 0.3)'
+                ))
+                fig_dd.update_layout(
+                    title="水下时间分布（红色区域代表无新高区间）",
+                    yaxis_tickformat=".1%",
+                    template="plotly_white",
+                    height=250,
+                    margin=dict(t=40, b=0)
+                )
+                st.plotly_chart(fig_dd, use_container_width=True)
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
 
@@ -168,25 +209,11 @@ if check_password():
                 st.markdown("#### 2. 底层产品走势对比")
                 df_sub = df_db[sel_funds].dropna()
                 df_sub_norm = df_sub.div(df_sub.iloc[0])
-                
                 fig_sub_compare = go.Figure()
                 for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(
-                        x=df_sub_norm.index, 
-                        y=df_sub_norm[col], 
-                        name=col, 
-                        opacity=0.6,
-                        line=dict(width=1.5)
-                    ))
-                
+                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(width=1.5)))
                 if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(
-                        x=star_nav.index, 
-                        y=star_nav, 
-                        name="寻星配置组合", 
-                        line=dict(color='red', width=4)
-                    ))
-                
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_sub_compare, use_container_width=True)
                 
@@ -210,26 +237,19 @@ if check_password():
             compare_pool = st.multiselect("搜索池内产品", all_cols, default=[])
             
             if compare_pool:
-                # 🛠️ 新增：是否对齐起始日期的选项
-                is_aligned = st.checkbox("对齐共同起始日期比较（勾选则只显示所有产品成立后的交集时段）", value=False)
-                
-                if is_aligned:
-                    df_comp = df_db[compare_pool].dropna()
-                else:
-                    df_comp = df_db[compare_pool] # 保留各自原始时间点
+                is_aligned = st.checkbox("对齐共同起始日期比较", value=False)
+                df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
                 
                 if not df_comp.empty:
                     fig_comp_lines = go.Figure()
                     for col in compare_pool:
-                        series = df_comp[col].dropna() # 针对单个产品去掉各自的空值
+                        series = df_comp[col].dropna()
                         if not series.empty:
                             norm_series = series / series.iloc[0]
                             fig_comp_lines.add_trace(go.Scatter(x=norm_series.index, y=norm_series, name=col))
-                    
                     fig_comp_lines.update_layout(title="配置池产品业绩走势对比", template="plotly_white", hovermode="x unified", height=500)
                     st.plotly_chart(fig_comp_lines, use_container_width=True)
                 
-                # 指标展示 (指标计算逻辑保持不变，依然基于各自的有效日期)
                 res_data = []
                 for col in compare_pool:
                     metrics = calculate_metrics(df_db[col])
@@ -241,8 +261,9 @@ if check_password():
                         "夏普比率": round(metrics['夏普比率'], 2),
                         "索提诺": round(metrics['索提诺比率'], 2),
                         "卡玛比率": round(metrics['卡玛比率'], 2),
-                        "年化波动": f"{metrics['年化波动率']:.2%}",
-                        "回撤修复": metrics['回撤修复天数']
+                        "回撤修复时间": metrics['回撤修复时间'],
+                        "最大无新高": metrics['无新高持续时间'],
+                        "年化波动": f"{metrics['年化波动率']:.2%}"
                     })
                 st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
     else:
