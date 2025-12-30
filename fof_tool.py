@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # ==========================================
-# 0. 登录验证模块 (稳健版)
+# 0. 登录验证模块
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -13,9 +13,7 @@ def check_password():
 
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<div style='text-align: center; color: #999;'>[ 此处预留公司 LOGO 位置 ]</div>", unsafe_allow_html=True)
         st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -71,10 +69,12 @@ if check_password():
         }
 
         if bench_nav is not None:
-            bench_rets = bench_nav.loc[nav.index].pct_change().fillna(0)
-            up_mask, down_mask = bench_rets > 0, bench_rets < 0
-            up_cap = (returns[up_mask].mean() / bench_rets[up_mask].mean()) if up_mask.any() else 0
-            down_cap = (returns[down_mask].mean() / bench_rets[down_mask].mean()) if down_mask.any() else 0
+            # 确保基准与净值日期对齐
+            b_sync = bench_nav.reindex(nav.index).ffill()
+            b_rets = b_sync.pct_change().fillna(0)
+            up_mask, down_mask = b_rets > 0, b_rets < 0
+            up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
+            down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
             metrics.update({"上行捕获": up_cap, "下行捕获": down_cap})
         return metrics
 
@@ -119,7 +119,7 @@ if check_password():
                 bench_norm = bench_sync / bench_sync.iloc[0]
 
         # ==========================================
-        # 3. 核心标签页布局
+        # 3. 标签页布局
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
@@ -137,7 +137,6 @@ if check_password():
                 c[6].metric("水下时间", f"{m['水下时间']:.1%}")
                 
                 fig_main = go.Figure()
-                # 精准优化：寻星组合用加粗红色展示
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_main.add_trace(go.Scatter(x=bench_norm.index, y=bench_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
                 fig_main.update_layout(template="plotly_white", hovermode="x unified", height=500)
@@ -149,7 +148,7 @@ if check_password():
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
                 
-                # 第一层：因 (资金与风险)
+                # 第一部分
                 st.markdown("#### 1. 初始配置与风险贡献")
                 ca1, ca2 = st.columns(2)
                 with ca1:
@@ -162,24 +161,35 @@ if check_password():
                     risk_pct = {k: v/total_r for k, v in risk_contrib.items()}
                     st.plotly_chart(px.pie(names=list(risk_pct.keys()), values=list(risk_pct.values()), hole=0.4, title="风险贡献归因"), use_container_width=True)
                 
-                # 第二层：过程 (改为底层产品走势对比，并加入红色组合线)
+                # 第二部分：修正后的绘图逻辑
                 st.markdown("---")
                 st.markdown("#### 2. 底层产品走势对比")
                 df_sub = df_db[sel_funds].dropna()
                 df_sub_norm = df_sub.div(df_sub.iloc[0])
                 
                 fig_sub_compare = go.Figure()
-                # 先画底层产品（淡色）
+                # 修复 opacity 报错：将 opacity 从 line 字典中移出
                 for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, line=dict(width=1.5, opacity=0.6)))
-                # 后画寻星配置组合（红色加粗，确保在顶层）
+                    fig_sub_compare.add_trace(go.Scatter(
+                        x=df_sub_norm.index, 
+                        y=df_sub_norm[col], 
+                        name=col, 
+                        opacity=0.6,
+                        line=dict(width=1.5)
+                    ))
+                
                 if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
+                    fig_sub_compare.add_trace(go.Scatter(
+                        x=star_nav.index, 
+                        y=star_nav, 
+                        name="寻星配置组合", 
+                        line=dict(color='red', width=4)
+                    ))
                 
                 fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_sub_compare, use_container_width=True)
                 
-                # 第三层：果 (上下排列)
+                # 第三部分
                 st.markdown("---")
                 st.markdown("#### 3. 产品性格分布图")
                 char_data = []
@@ -192,10 +202,10 @@ if check_password():
                 fig_char.add_vline(x=1.0, line_dash="dash"); fig_char.add_hline(y=1.0, line_dash="dash")
                 st.plotly_chart(fig_char, use_container_width=True)
                 
-                st.markdown("#### 4. 成分相关性矩阵")
+                st.markdown("#### 4. 产品相关性矩阵")
                 st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600), use_container_width=True)
             else:
-                st.info("👈 请在左侧侧边栏挑选成分。")
+                st.info("👈 请在左侧挑选成分。")
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
