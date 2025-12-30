@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # ==========================================
-# 0. 登录验证模块 (保持 v2.28 稳健版本)
+# 0. 登录验证模块 (稳健版)
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -58,8 +58,8 @@ if check_password():
         cummax = nav.cummax()
         mdd = (nav / cummax - 1).min()
         vol = returns.std() * np.sqrt(252)
-        rf = 0.02
-        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
+        rf, sharpe = 0.02, 0
+        if vol > 0: sharpe = (ann_ret - rf) / vol
         calmar = ann_ret / abs(mdd) if abs(mdd) > 0 else 0
         rep_v, rep_s = get_max_drawdown_recovery_days(nav)
         tuw_ratio = (nav < cummax).sum() / len(nav)
@@ -114,6 +114,7 @@ if check_password():
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 star_rets = (port_rets * norm_w).sum(axis=1)
                 star_nav = (1 + star_rets).cumprod()
+                star_nav.name = "寻星配置组合"
                 bench_sync = df_db.loc[star_nav.index, sel_bench]
                 bench_norm = bench_sync / bench_sync.iloc[0]
 
@@ -136,19 +137,20 @@ if check_password():
                 c[6].metric("水下时间", f"{m['水下时间']:.1%}")
                 
                 fig_main = go.Figure()
-                fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='#1E40AF', width=3)))
+                # 精准优化：寻星组合用加粗红色展示
+                fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_main.add_trace(go.Scatter(x=bench_norm.index, y=bench_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
+                fig_main.update_layout(template="plotly_white", hovermode="x unified", height=500)
                 st.plotly_chart(fig_main, use_container_width=True)
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
 
-        # 【重点】Tab 2 与 Tab 3 合并重构
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
                 
                 # 第一层：因 (资金与风险)
-                st.markdown("#### 1. 初始配置与风险贡献 (因)")
+                st.markdown("#### 1. 初始配置与风险贡献")
                 ca1, ca2 = st.columns(2)
                 with ca1:
                     st.plotly_chart(px.pie(names=list(weights.keys()), values=list(weights.values()), hole=0.4, title="资金权重分配"), use_container_width=True)
@@ -158,30 +160,40 @@ if check_password():
                     risk_contrib = {f: weights[f] * vol_list[f] for f in sel_funds}
                     total_r = sum(risk_contrib.values()) if sum(risk_contrib.values()) > 0 else 1
                     risk_pct = {k: v/total_r for k, v in risk_contrib.items()}
-                    st.plotly_chart(px.pie(names=list(risk_pct.keys()), values=list(risk_pct.values()), hole=0.4, title="风险贡献归因", color_discrete_sequence=px.colors.diverging.RdBu), use_container_width=True)
+                    st.plotly_chart(px.pie(names=list(risk_pct.keys()), values=list(risk_pct.values()), hole=0.4, title="风险贡献归因"), use_container_width=True)
                 
-                # 第二层：过程 (成分走势对比)
+                # 第二层：过程 (改为底层产品走势对比，并加入红色组合线)
                 st.markdown("---")
-                st.markdown("#### 2. 底层成分走势对比 (过程)")
+                st.markdown("#### 2. 底层产品走势对比")
                 df_sub = df_db[sel_funds].dropna()
-                st.plotly_chart(px.line(df_sub.div(df_sub.iloc[0]), title="成分净值标准化走势"), use_container_width=True)
+                df_sub_norm = df_sub.div(df_sub.iloc[0])
                 
-                # 第三层：果 (性格分布与相关性)
+                fig_sub_compare = go.Figure()
+                # 先画底层产品（淡色）
+                for col in df_sub_norm.columns:
+                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, line=dict(width=1.5, opacity=0.6)))
+                # 后画寻星配置组合（红色加粗，确保在顶层）
+                if star_nav is not None:
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
+                
+                fig_sub_compare.update_layout(template="plotly_white", hovermode="x unified", height=500)
+                st.plotly_chart(fig_sub_compare, use_container_width=True)
+                
+                # 第三层：果 (上下排列)
                 st.markdown("---")
-                st.markdown("#### 3. 产品性格与相互影响 (果)")
-                cb1, cb2 = st.columns(2)
-                with cb1:
-                    char_data = []
-                    for f in sel_funds:
-                        f_m = calculate_metrics(df_sub[f], df_db[sel_bench])
-                        char_data.append({"产品": f, "上行捕获": f_m['上行捕获'], "下行捕获": f_m['下行捕获'], "年化收益": f_m['年化收益']})
-                    df_char = pd.DataFrame(char_data)
-                    fig_char = px.scatter(df_char, x="下行捕获", y="上行捕获", size=df_char["年化收益"].clip(lower=0.01), 
-                                         text="产品", title="性格分布散点图", color="年化收益", color_continuous_scale='Viridis')
-                    fig_char.add_vline(x=1.0, line_dash="dash"); fig_char.add_hline(y=1.0, line_dash="dash")
-                    st.plotly_chart(fig_char, use_container_width=True)
-                with cb2:
-                    st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', title="成分相关性矩阵"), use_container_width=True)
+                st.markdown("#### 3. 产品性格分布图")
+                char_data = []
+                for f in sel_funds:
+                    f_m = calculate_metrics(df_sub[f], df_db[sel_bench])
+                    char_data.append({"产品": f, "上行捕获": f_m['上行捕获'], "下行捕获": f_m['下行捕获'], "年化收益": f_m['年化收益']})
+                df_char = pd.DataFrame(char_data)
+                fig_char = px.scatter(df_char, x="下行捕获", y="上行捕获", size=df_char["年化收益"].clip(lower=0.01), 
+                                     text="产品", color="年化收益", color_continuous_scale='Viridis', height=600)
+                fig_char.add_vline(x=1.0, line_dash="dash"); fig_char.add_hline(y=1.0, line_dash="dash")
+                st.plotly_chart(fig_char, use_container_width=True)
+                
+                st.markdown("#### 4. 成分相关性矩阵")
+                st.plotly_chart(px.imshow(df_sub.pct_change().corr(), text_auto=".2f", color_continuous_scale='RdBu_r', height=600), use_container_width=True)
             else:
                 st.info("👈 请在左侧侧边栏挑选成分。")
 
