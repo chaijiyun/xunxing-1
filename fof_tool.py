@@ -8,14 +8,9 @@ import os  # 用于文件路径管理
 # ==========================================
 # 0. 全局产品费率逻辑 (三级加载机制)
 # ==========================================
-# 优先级：
-# Level 1 (最高): 界面上临时手动修改的数字 (编辑器)
-# Level 2 (中等): 上次上传并保存的本地文件 (config_fees_saved.csv)
-# Level 3 (最低): 代码里的硬编码默认值 (PRESET_FEES_DEFAULT)
+CONFIG_FILE_PATH = 'config_fees_saved.csv'
 
-CONFIG_FILE_PATH = 'config_fees_saved.csv' # 本地存档文件名，系统会自动在当前目录读写此文件
-
-# Level 3: 代码硬编码默认值 (作为兜底)
+# Level 3: 代码硬编码默认值
 PRESET_FEES_DEFAULT = {
     # --- 核心底仓 ---
     "合绎期权套利": {"mgmt": 0.00, "perf": 0.30},
@@ -38,33 +33,26 @@ PRESET_FEES_DEFAULT = {
     "孝庸1000指增": {"mgmt": 0.00, "perf": 0.20},
     "平方和1000指数增强": {"mgmt": 0.00, "perf": 0.20},
 }
-# 通用兜底
 DEFAULT_FEE_General = {"mgmt": 0.00, "perf": 0.20} 
 
 # 函数：加载费率库
 def load_fee_library():
-    # 1. 先加载代码默认值
     current_fees = PRESET_FEES_DEFAULT.copy()
-    
-    # 2. 检查有没有本地存档 (Level 2)
     if os.path.exists(CONFIG_FILE_PATH):
         try:
-            # 尝试读取 CSV
             saved_df = pd.read_csv(CONFIG_FILE_PATH)
-            # 覆盖默认值
             for _, row in saved_df.iterrows():
                 p_name = str(row['产品名称']).strip()
                 current_fees[p_name] = {
                     'mgmt': float(row['年管理费(%)']) / 100.0,
                     'perf': float(row['业绩报酬(%)']) / 100.0
                 }
-            return current_fees, True # True 表示使用了本地存档
-        except Exception as e:
-            # 如果读取失败，就还是用默认值，并不报错崩溃
+            return current_fees, True
+        except Exception:
             return current_fees, False
     return current_fees, False
 
-# 初始化加载 (程序启动时执行一次)
+# 初始化加载
 GLOBAL_FEE_DICT, IS_USING_LOCAL_FILE = load_fee_library()
 
 
@@ -76,7 +64,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.11</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.12 (修复版)</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -96,9 +84,6 @@ if check_password():
     # 2. 核心指标计算引擎
     # ==========================================
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
-        """
-        费后净值计算函数 (高水位法 High Water Mark)
-        """
         if gross_nav_series.empty: return gross_nav_series
         base_nav = gross_nav_series.iloc[0]
         gross_norm = gross_nav_series / base_nav
@@ -109,7 +94,6 @@ if check_password():
         
         gross_returns = gross_norm.pct_change().fillna(0)
         
-        # 估算数据频率以平摊管理费
         days_diff = (dates[-1] - dates[0]).days
         periods = len(dates)
         avg_days = days_diff / periods if periods > 0 else 7
@@ -117,22 +101,17 @@ if check_password():
 
         for i in range(1, len(gross_returns)):
             r_gross = gross_returns.iloc[i]
-            
-            # 1. 扣除管理费 (按年化费率平摊到本期)
             mgmt_cost = mgmt_fee_rate / freq_factor
             nav_after_mgmt = net_nav[-1] * (1 + r_gross - mgmt_cost)
             
-            # 2. 扣除业绩报酬 (创新高才扣)
             fee_perf = 0.0
             if nav_after_mgmt > high_water_mark:
                 excess = nav_after_mgmt - high_water_mark
                 fee_perf = excess * perf_fee_rate
-                # 更新水位线
                 high_water_mark = nav_after_mgmt - fee_perf 
             
             nav_final = nav_after_mgmt - fee_perf
-            if nav_final < 0: nav_final = 0 # 兜底防止穿仓
-            
+            if nav_final < 0: nav_final = 0
             net_nav.append(nav_final)
         
         return pd.Series(net_nav, index=dates)
@@ -196,16 +175,13 @@ if check_password():
             b_sync = bench_nav.reindex(nav.index).ffill()
             b_rets = b_sync.pct_change().fillna(0)
             
-            # 捕获比率
             up_mask, down_mask = b_rets > 0, b_rets < 0
             up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
             down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
             
-            # 全周期 Beta
             cov_mat = np.cov(returns, b_rets)
             beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
             
-            # 滚动 Beta (Window = 126 days ~ 6 months)
             window = 126
             rolling_betas = []
             rolling_dates = []
@@ -246,37 +222,50 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === v5.11 升级：永久费率记忆管理 ===
+        # === v5.12 修复：防重运行逻辑 ===
         with st.sidebar.expander("⚙️ 费率库管理 (自动记忆版)", expanded=False):
-            # A. 状态提示
             if IS_USING_LOCAL_FILE:
-                st.success(f"✅ 已加载本地配置 ({CONFIG_FILE_PATH})")
+                st.success(f"✅ 已加载本地配置")
             else:
                 st.info("ℹ️ 当前使用系统默认配置")
 
-            # B. 上传更新区域 (Level 2 写入)
             uploaded_config = st.file_uploader("📤 上传并保存新费率表 (Excel/CSV)", type=['xlsx', 'csv'])
+            
+            # [Fix Bug]: 增加 session_state 检查，防止死循环
             if uploaded_config:
-                try:
-                    if uploaded_config.name.endswith('.csv'):
-                        df_new_config = pd.read_csv(uploaded_config)
-                    else:
-                        df_new_config = pd.read_excel(uploaded_config)
-                    
-                    # 简单校验列名
-                    required_cols = ['产品名称', '年管理费(%)', '业绩报酬(%)']
-                    if all(col in df_new_config.columns for col in required_cols):
-                        # 保存到本地 CSV，实现“记忆”
-                        df_new_config[required_cols].to_csv(CONFIG_FILE_PATH, index=False)
-                        st.toast("🎉 费率表已保存！下次打开系统会自动加载。", icon="💾")
-                        st.rerun() # 刷新页面以加载新配置
-                    else:
-                        st.error("❌ 格式错误：必须包含列名 [产品名称, 年管理费(%), 业绩报酬(%)]")
-                except Exception as e:
-                    st.error(f"解析失败: {e}")
+                # 生成文件的唯一指纹 (文件名+大小)
+                file_signature = f"{uploaded_config.name}-{uploaded_config.size}"
+                
+                # 初始化 session_state
+                if "last_processed_fee_file" not in st.session_state:
+                    st.session_state["last_processed_fee_file"] = ""
+                
+                # 只有当这是个【新】文件时，才执行保存和刷新
+                if st.session_state["last_processed_fee_file"] != file_signature:
+                    try:
+                        if uploaded_config.name.endswith('.csv'):
+                            df_new_config = pd.read_csv(uploaded_config)
+                        else:
+                            df_new_config = pd.read_excel(uploaded_config)
+                        
+                        required_cols = ['产品名称', '年管理费(%)', '业绩报酬(%)']
+                        if all(col in df_new_config.columns for col in required_cols):
+                            df_new_config[required_cols].to_csv(CONFIG_FILE_PATH, index=False)
+                            
+                            # 标记此文件已处理
+                            st.session_state["last_processed_fee_file"] = file_signature
+                            
+                            st.toast("🎉 费率表已保存！正在加载...", icon="💾")
+                            st.rerun() # 刷新以应用新配置
+                        else:
+                            st.error("❌ 格式错误：缺列名 [产品名称, 年管理费(%), 业绩报酬(%)]")
+                    except Exception as e:
+                        st.error(f"解析失败: {e}")
+                else:
+                    # 如果已经处理过，就不再刷新，只显示提示
+                    st.caption(f"✅ 当前上传文件已生效: {uploaded_config.name}")
 
-            # C. 准备编辑器数据 (融合版)
-            # 将 GLOBAL_FEE_DICT (可能来自本地或默认) 转换为 DataFrame 用于展示
+            # 编辑器部分
             fee_list_display = []
             for name, fee in GLOBAL_FEE_DICT.items():
                 fee_list_display.append({
@@ -284,7 +273,6 @@ if check_password():
                     "年管理费(%)": fee['mgmt'] * 100,
                     "业绩报酬(%)": fee['perf'] * 100
                 })
-            # 补全 Excel 里有但库里没有的产品 (方便用户直接在表格里看到并修改)
             known_names = set(GLOBAL_FEE_DICT.keys())
             for col in all_cols:
                 if col not in known_names and col != '沪深300' and col != '日期':
@@ -295,18 +283,15 @@ if check_password():
                     })
             
             df_fee_edit = pd.DataFrame(fee_list_display)
-            
-            # D. 显示可编辑表格 (Level 1 临时修改)
-            st.caption("👇 您可以在下方临时微调 (不会修改存档文件)")
+            st.caption("👇 下方可临时微调 (不会修改存档)")
             edited_fee_df = st.data_editor(
                 df_fee_edit, 
                 use_container_width=True,
                 height=200,
-                key="fee_editor_v511",
+                key="fee_editor_v512",
                 hide_index=True
             )
             
-            # E. 下载模板功能
             @st.cache_data
             def convert_df(df):
                 return df.to_csv(index=False).encode('utf-8-sig')
@@ -319,8 +304,6 @@ if check_password():
                 mime='text/csv',
             )
 
-            # F. 生成最终计算字典 (ACTIVE_FEE_DICT)
-            # 优先使用编辑器里的数据
             ACTIVE_FEE_DICT = {}
             for index, row in edited_fee_df.iterrows():
                 p_name = str(row["产品名称"]).strip()
@@ -366,17 +349,16 @@ if check_password():
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
-                # 1. Gross (费前)
+                # 1. Gross
                 star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
                 star_nav_gross = (1 + star_rets_gross).cumprod()
                 star_nav_gross.name = "寻星配置组合 (费前)"
 
-                # 2. Net (费后)
+                # 2. Net
                 if fee_mode != "不考虑费率 (Gross)":
                     net_funds_df = pd.DataFrame(index=df_port.index)
                     for f in sel_funds:
                         gross_series = df_port[f]
-                        # 核心逻辑：从 ACTIVE_FEE_DICT 获取费率
                         f_conf = ACTIVE_FEE_DICT.get(f, DEFAULT_FEE_General)
                         net_series = calculate_net_nav_series(gross_series, f_conf['mgmt'], f_conf['perf'])
                         net_funds_df[f] = net_series
@@ -385,7 +367,7 @@ if check_password():
                     star_nav_net = (1 + star_rets_net).cumprod()
                     star_nav_net.name = "寻星配置组合 (费后)"
 
-                # 3. Mode Selection
+                # 3. Mode
                 if fee_mode == "不考虑费率 (Gross)":
                     star_nav = star_nav_gross
                 else:
@@ -443,7 +425,6 @@ if check_password():
                 c_risk[2].metric("日度正收益概率", f"{m['正收益概率(日)']:.1%}")
                 c_risk[3].metric("当前 Beta (近半年)", f"{m['Current_Beta']:.2f}", delta_color="off")
                 
-                # Beta 漂移预警
                 beta_drift = abs(m['Current_Beta'] - m['Beta'])
                 if beta_drift > 0.1:
                     st.warning(f"⚠️ **风格漂移预警**：当前 Beta ({m['Current_Beta']:.2f}) 与全周期均值 ({m['Beta']:.2f}) 偏差 {beta_drift:.2f} (超过阈值 0.1)，请前往 TAB 2 查看详细漂移路径。")
@@ -469,7 +450,6 @@ if check_password():
                 col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
                 col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
 
-                # Rolling Beta Plot
                 if not m['Rolling_Beta_Series'].empty:
                     st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
                     fig_beta = go.Figure()
