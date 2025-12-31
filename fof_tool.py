@@ -64,7 +64,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.17</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.18</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -279,7 +279,7 @@ if check_password():
                 df_fee_edit, 
                 use_container_width=True,
                 height=200,
-                key="fee_editor_v517",
+                key="fee_editor_v518",
                 hide_index=True
             )
             
@@ -470,12 +470,15 @@ if check_password():
                 st.markdown("#### 底层产品走势对比")
                 df_sub_norm = df_attr.div(df_attr.iloc[0])
                 fig_sub_compare = go.Figure()
+                
+                # 画底层细线
                 for col in df_sub_norm.columns:
                     fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
                 
-                line_color = 'red' if fee_mode_label != "组合策略表现 (底层净值)" else 'blue'
+                # [v5.18 修改] 强制红色粗线
                 if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color=line_color, width=4)))
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
+                
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
                 st.markdown("---")
@@ -495,7 +498,6 @@ if check_password():
             
             compare_pool = st.multiselect("搜索池内产品 (费前对比)", pool_options, default=[])
             
-            # [v5.17 修复点]：将 is_aligned 检查放回 if 内部
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
