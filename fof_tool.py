@@ -64,7 +64,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.15</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.16</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -279,7 +279,7 @@ if check_password():
                 df_fee_edit, 
                 use_container_width=True,
                 height=200,
-                key="fee_editor_v515",
+                key="fee_editor_v516",
                 hide_index=True
             )
             
@@ -308,14 +308,22 @@ if check_password():
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
         
-        # 字母排序 (v5.13)
+        # 字母排序
         available_funds = [c for c in all_cols if c != sel_bench]
         available_funds.sort()
         sel_funds = st.sidebar.multiselect("挑选寻星配置组合成分", available_funds)
         
+        # === v5.16 核心修复：生成固定的颜色映射表 ===
+        # 确保同一个产品在所有饼图中颜色一致
+        color_map = {}
+        if sel_funds:
+            colors = px.colors.qualitative.Plotly # 使用 Plotly 默认色板
+            for i, f in enumerate(sel_funds):
+                color_map[f] = colors[i % len(colors)]
+        # ==========================================
+        
         weights = {}
         
-        # 话术优化 (v5.14)
         fee_mode_label = "客户实得回报 (实盘费后)"
         if sel_funds:
             st.sidebar.markdown("#### ⚖️ 初始比例设定")
@@ -439,9 +447,10 @@ if check_password():
                 latest_values = initial_w_series * growth_factors
                 latest_w_series = latest_values / latest_values.sum()
 
+                # [v5.16 修改点]：强制应用 color_map
                 col_w1, col_w2 = st.columns(2)
-                col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
-                col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
+                col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例", color=initial_w_series.index, color_discrete_map=color_map), use_container_width=True)
+                col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)", color=latest_w_series.index, color_discrete_map=color_map), use_container_width=True)
 
                 if not m['Rolling_Beta_Series'].empty:
                     st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
@@ -457,16 +466,20 @@ if check_password():
                 risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252))
                 contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
 
+                # [v5.16 修改点]：强制应用 color_map (注意：贡献值可能为负，但颜色仍需对齐产品)
+                # 为防止负值报错 px.pie，我们取 abs() 并仅作为可视化大小，真实值不影响颜色映射
                 col_attr1, col_attr2 = st.columns(2)
-                col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因"), use_container_width=True)
-                col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因"), use_container_width=True)
+                col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因", color=risk_vals.index, color_discrete_map=color_map), use_container_width=True)
+                col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因", color=contribution_vals.index, color_discrete_map=color_map), use_container_width=True)
 
                 st.markdown("---")
                 st.markdown("#### 底层产品走势对比")
                 df_sub_norm = df_attr.div(df_attr.iloc[0])
                 fig_sub_compare = go.Figure()
+                # [v5.16 修改点]：折线图也尽可能应用颜色（可选，但为了对比清晰，这里先保持默认色板，因为折线图有图例不容混淆。若需要也可强行指定）
                 for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6))
+                    # 使用 color_map 中的颜色
+                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
                 
                 line_color = 'red' if fee_mode_label != "组合策略表现 (底层净值)" else 'blue'
                 if star_nav is not None:
@@ -479,7 +492,8 @@ if check_password():
                     f_metrics = calculate_metrics(df_attr[f], df_db[sel_bench])
                     f_metrics['产品'] = f
                     char_data.append(f_metrics)
-                st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="年化收益", title="产品性格象限分布", height=600), use_container_width=True)
+                # 散点图的颜色也对齐
+                st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="产品", color_discrete_map=color_map, title="产品性格象限分布", height=600), use_container_width=True)
                 st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', title="产品相关性矩阵", height=600), use_container_width=True)
 
         with tabs[2]:
@@ -491,37 +505,28 @@ if check_password():
             compare_pool = st.multiselect("搜索池内产品 (费前对比)", pool_options, default=[])
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
-                
-                # === [v5.15 核心修复点] ===
-                # 1. 定义 df_comp (对齐后的数据源)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
-                
                 if not df_comp.empty:
-                    # 2. 画图 (图表代码未动，逻辑正确)
                     fig_p = go.Figure()
                     for col in compare_pool:
                         s = df_comp[col].dropna()
                         if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
                     st.plotly_chart(fig_p.update_layout(title="业绩对比 (费前)", template="plotly_white", height=500), use_container_width=True)
                 
-                    # 3. 业绩表格 (核心修复: 强制使用 df_comp 进行统计)
-                    res_data = []
-                    for col in compare_pool:
-                        # 重点：这里使用 df_comp[col] 而不是 df_db[col]
-                        # 这样如果勾选了对齐，传入的数据就是被截断对齐过的；没勾选就是原始的。
-                        k = calculate_metrics(df_comp[col]) 
-                        
-                        if k: # 简单防空
-                            res_data.append({
-                                "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", 
-                                "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
-                                "索提诺": round(k['索提诺比率'], 2), "卡玛": round(k['卡玛比率'], 2), 
-                                "波动": f"{k['年化波动率']:.2%}", 
-                                "最大回撤修复时间": k['最大回撤修复时间'], "最大无新高持续时间": k['最大无新高持续时间']
-                            })
-                    if res_data:
-                        st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
-                else:
-                    st.warning("⚠️ 所选产品在当前时间段内没有重合数据，无法对齐比较。")
+                res_data = []
+                for col in compare_pool:
+                    k = calculate_metrics(df_comp[col])
+                    if k: 
+                        res_data.append({
+                            "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", 
+                            "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
+                            "索提诺": round(k['索提诺比率'], 2), "卡玛": round(k['卡玛比率'], 2), 
+                            "波动": f"{k['年化波动率']:.2%}", 
+                            "最大回撤修复时间": k['最大回撤修复时间'], "最大无新高持续时间": k['最大无新高持续时间']
+                        })
+                if res_data:
+                    st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
+            else:
+                if is_aligned: st.warning("⚠️ 所选产品在当前时间段内没有重合数据，无法对齐比较。")
     else:
         st.info("👋 请上传‘产品数据库’。")
