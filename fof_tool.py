@@ -64,7 +64,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.12 (修复版)</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.13</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -231,16 +231,11 @@ if check_password():
 
             uploaded_config = st.file_uploader("📤 上传并保存新费率表 (Excel/CSV)", type=['xlsx', 'csv'])
             
-            # [Fix Bug]: 增加 session_state 检查，防止死循环
             if uploaded_config:
-                # 生成文件的唯一指纹 (文件名+大小)
                 file_signature = f"{uploaded_config.name}-{uploaded_config.size}"
-                
-                # 初始化 session_state
                 if "last_processed_fee_file" not in st.session_state:
                     st.session_state["last_processed_fee_file"] = ""
                 
-                # 只有当这是个【新】文件时，才执行保存和刷新
                 if st.session_state["last_processed_fee_file"] != file_signature:
                     try:
                         if uploaded_config.name.endswith('.csv'):
@@ -251,18 +246,14 @@ if check_password():
                         required_cols = ['产品名称', '年管理费(%)', '业绩报酬(%)']
                         if all(col in df_new_config.columns for col in required_cols):
                             df_new_config[required_cols].to_csv(CONFIG_FILE_PATH, index=False)
-                            
-                            # 标记此文件已处理
                             st.session_state["last_processed_fee_file"] = file_signature
-                            
                             st.toast("🎉 费率表已保存！正在加载...", icon="💾")
-                            st.rerun() # 刷新以应用新配置
+                            st.rerun() 
                         else:
                             st.error("❌ 格式错误：缺列名 [产品名称, 年管理费(%), 业绩报酬(%)]")
                     except Exception as e:
                         st.error(f"解析失败: {e}")
                 else:
-                    # 如果已经处理过，就不再刷新，只显示提示
                     st.caption(f"✅ 当前上传文件已生效: {uploaded_config.name}")
 
             # 编辑器部分
@@ -316,7 +307,14 @@ if check_password():
 
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
-        sel_funds = st.sidebar.multiselect("挑选寻星配置组合成分", [c for c in all_cols if c != sel_bench])
+        
+        # === v5.13 升级：对产品池进行字母排序 ===
+        # 1. 排除掉基准
+        available_funds = [c for c in all_cols if c != sel_bench]
+        # 2. 进行排序 (如果是中文，Python默认按Unicode编码排，近似于拼音顺序，效果通常足够好)
+        available_funds.sort()
+        
+        sel_funds = st.sidebar.multiselect("挑选寻星配置组合成分", available_funds)
         
         weights = {}
         
@@ -491,7 +489,13 @@ if check_password():
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
-            compare_pool = st.multiselect("搜索池内产品 (费前对比)", all_cols, default=[])
+            
+            # === v5.13 升级：Tab 3 的下拉框也进行自动排序 ===
+            # 同样排除基准，并进行排序
+            pool_options = [c for c in all_cols if c != sel_bench]
+            pool_options.sort()
+            
+            compare_pool = st.multiselect("搜索池内产品 (费前对比)", pool_options, default=[])
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
