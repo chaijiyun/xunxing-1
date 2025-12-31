@@ -5,14 +5,45 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # ==========================================
-# 0. 登录验证模块
+# 0. 全局产品费率库 (Master Data)
+# ==========================================
+# 逻辑：每次计算时，系统会自动根据产品名称来这里“查字典”
+# 格式：'产品名称': {'mgmt': 年管理费率(1.5%=0.015), 'perf': 业绩报酬(20%=0.20)}
+PRESET_FEES = {
+    # --- 核心底仓 ---
+    "合绎期权套利": {"mgmt": 0.00, "perf": 0.30},
+    "平方和多策略6号(市场中性+多策略）": {"mgmt": 0.00, "perf": 0.18},
+    
+    # --- 股票多头 ---
+    "开思沪港深优选": {"mgmt": 0.015, "perf": 0.17},
+    "蓝墨长河1号": {"mgmt": 0.00, "perf": 0.20},
+    "宁泉特定策略1号": {"mgmt": 0.00, "perf": 0.15},
+    "睿郡节节高11号": {"mgmt": 0.00, "perf": 0.20},
+    "宽远优势成长10号": {"mgmt": 0.00, "perf": 0.20},
+    
+    # --- 量化/中性 ---
+    "孝庸中性策略": {"mgmt": 0.00, "perf": 0.20},
+    "孝庸中性+cta": {"mgmt": 0.00, "perf": 0.20},
+    "平方和市场中性": {"mgmt": 0.00, "perf": 0.20},
+    
+    # --- 指数增强 ---
+    "孝庸500指增": {"mgmt": 0.00, "perf": 0.20},
+    "孝庸1000指增": {"mgmt": 0.00, "perf": 0.20},
+    "平方和1000指数增强": {"mgmt": 0.00, "perf": 0.20},
+}
+
+# 兜底费率：如果产品不在上面的名单里，默认按这个算
+DEFAULT_FEE = {"mgmt": 0.00, "perf": 0.20} 
+
+# ==========================================
+# 1. 登录验证模块
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.9</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -29,11 +60,55 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 1. 核心指标计算引擎
+    # 2. 核心指标计算引擎
     # ==========================================
+    def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
+        """
+        费后净值计算函数 (高水位法 High Water Mark)
+        """
+        if gross_nav_series.empty: return gross_nav_series
+        
+        # 归一化起点为 1.0
+        base_nav = gross_nav_series.iloc[0]
+        gross_norm = gross_nav_series / base_nav
+        
+        net_nav = [1.0]
+        high_water_mark = 1.0
+        dates = gross_nav_series.index
+        
+        gross_returns = gross_norm.pct_change().fillna(0)
+        
+        # 估算数据频率以平摊管理费
+        days_diff = (dates[-1] - dates[0]).days
+        periods = len(dates)
+        avg_days = days_diff / periods if periods > 0 else 7
+        freq_factor = 365.0 / avg_days if avg_days > 0 else 52.0
+
+        for i in range(1, len(gross_returns)):
+            r_gross = gross_returns.iloc[i]
+            
+            # 1. 扣除管理费 (按年化费率平摊到本期)
+            mgmt_cost = mgmt_fee_rate / freq_factor
+            nav_after_mgmt = net_nav[-1] * (1 + r_gross - mgmt_cost)
+            
+            # 2. 扣除业绩报酬 (创新高才扣)
+            fee_perf = 0.0
+            if nav_after_mgmt > high_water_mark:
+                excess = nav_after_mgmt - high_water_mark
+                fee_perf = excess * perf_fee_rate
+                # 更新水位线为【扣费后】的净值
+                high_water_mark = nav_after_mgmt - fee_perf 
+            
+            nav_final = nav_after_mgmt - fee_perf
+            if nav_final < 0: nav_final = 0 # 兜底
+            
+            net_nav.append(nav_final)
+        
+        return pd.Series(net_nav, index=dates)
+
     def get_drawdown_details(nav_series):
         if nav_series.empty or len(nav_series) < 2: 
-            return "数据不足", "数据不足", pd.Series()
+            return "数据不足", "数据不足", pd.Series(dtype='float64')
         cummax = nav_series.cummax()
         drawdown = (nav_series / cummax) - 1
         mdd_val = drawdown.min()
@@ -99,7 +174,7 @@ if check_password():
             cov_mat = np.cov(returns, b_rets)
             beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
             
-            # 滚动 Beta 计算 (Window = 126 days ~ 6 months)
+            # 滚动 Beta (Window = 126 days ~ 6 months)
             window = 126
             rolling_betas = []
             rolling_dates = []
@@ -112,7 +187,6 @@ if check_password():
                     rb = cov_rb / var_b if var_b != 0 else 0
                     rolling_betas.append(rb)
                     rolling_dates.append(returns.index[i])
-                
                 curr_beta = rolling_betas[-1]
                 rb_series = pd.Series(rolling_betas, index=rolling_dates)
             else:
@@ -128,7 +202,7 @@ if check_password():
         return metrics
 
     # ==========================================
-    # 2. UI 界面与侧边栏
+    # 3. UI 界面与侧边栏
     # ==========================================
     st.set_page_config(layout="wide", page_title="寻星配置分析系统", page_icon="🏛️")
     st.sidebar.title("🏛️ 寻星配置分析系统")
@@ -145,39 +219,86 @@ if check_password():
         sel_funds = st.sidebar.multiselect("挑选寻星配置组合成分", [c for c in all_cols if c != sel_bench])
         
         weights = {}
+        
+        # === v5.9 核心升级：费率模式开关 ===
+        fee_mode = "不考虑费率 (Gross)" # 默认
+        
         if sel_funds:
             st.sidebar.markdown("#### ⚖️ 初始比例设定")
             avg_w = 1.0 / len(sel_funds)
             for f in sel_funds:
                 weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
-        
+            
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("#### 💰 费率与净值展示模式")
+            fee_mode = st.sidebar.radio(
+                "选择计算模式", 
+                ("不考虑费率 (Gross)", "考虑费率 (Net)", "费率磨损对比 (Analysis)"),
+                index=0
+            )
+            if fee_mode != "不考虑费率 (Gross)":
+                st.sidebar.caption("✅ 已自动调用后台预设费率库进行计算")
+
         df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
         
         star_nav = None
+        star_nav_gross = None # 用于对比模式
+        star_nav_net = None   # 用于对比模式
+
         if sel_funds and not df_db.empty:
             df_port = df_db[sel_funds].dropna()
+            
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
-                star_rets = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
-                star_nav = (1 + star_rets).cumprod()
-                star_nav.name = "寻星配置组合"
+                
+                # 1. 计算费前 (Gross) 组合
+                star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
+                star_nav_gross = (1 + star_rets_gross).cumprod()
+                star_nav_gross.name = "寻星配置组合 (费前)"
+
+                # 2. 计算费后 (Net) 组合
+                # 如果模式不是 Gross，就算一遍 Net
+                if fee_mode != "不考虑费率 (Gross)":
+                    net_funds_df = pd.DataFrame(index=df_port.index)
+                    for f in sel_funds:
+                        gross_series = df_port[f]
+                        # 查字典：根据名字匹配费率
+                        f_conf = PRESET_FEES.get(f, DEFAULT_FEE)
+                        # 如果是模糊匹配需求，可在这里加逻辑
+                        net_series = calculate_net_nav_series(gross_series, f_conf['mgmt'], f_conf['perf'])
+                        net_funds_df[f] = net_series
+                    
+                    star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
+                    star_nav_net = (1 + star_rets_net).cumprod()
+                    star_nav_net.name = "寻星配置组合 (费后)"
+
+                # 3. 决定主图展示哪个净值
+                if fee_mode == "不考虑费率 (Gross)":
+                    star_nav = star_nav_gross
+                else:
+                    star_nav = star_nav_net # Net 或 Analysis 模式，默认主指标都看 Net
+                
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
         # ==========================================
-        # 3. 标签页布局
+        # 4. 标签页布局
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
-        # 计算指标 (只计算一次，供各TAB使用)
+        # 计算指标
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
 
         with tabs[0]:
             if star_nav is not None:
-                st.subheader("📊 寻星配置组合全景图")
+                title_suffix = ""
+                if fee_mode == "不考虑费率 (Gross)": title_suffix = "(费前)"
+                elif fee_mode == "考虑费率 (Net)": title_suffix = "(实盘费后)"
                 
-                # 顶部核心指标
+                st.subheader(f"📊 寻星配置组合全景图 {title_suffix}")
+                
+                # 核心指标卡
                 c_top = st.columns(7)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -187,9 +308,24 @@ if check_password():
                 c_top[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
                 c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
                 
-                # 净值图
+                # 净值走势图
                 fig_main = go.Figure()
-                fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
+                
+                if fee_mode == "费率磨损对比 (Analysis)":
+                    # === 对比模式：画两条线 ===
+                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="寻星组合 (实盘费后)", line=dict(color='red', width=3)))
+                    fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="寻星组合 (原始费前)", line=dict(color='gray', width=2, dash='dash')))
+                    
+                    # 自动计算磨损值
+                    loss_amt = star_nav_gross.iloc[-1] - star_nav_net.iloc[-1]
+                    loss_pct = 1 - (star_nav_net.iloc[-1] / star_nav_gross.iloc[-1])
+                    st.info(f"💡 **费率磨损分析**：在当前周期内，费率导致净值少赚了 **{loss_amt:.3f}** (收益折损约 {loss_pct:.2%})。")
+                else:
+                    # === 普通模式：画一条线 ===
+                    line_name = "寻星配置组合"
+                    if fee_mode == "考虑费率 (Net)": line_name += " (实盘费后)"
+                    fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=line_name, line=dict(color='red', width=4)))
+
                 fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
@@ -202,7 +338,7 @@ if check_password():
                 c_risk[2].metric("日度正收益概率", f"{m['正收益概率(日)']:.1%}")
                 c_risk[3].metric("当前 Beta (近半年)", f"{m['Current_Beta']:.2f}", delta_color="off")
                 
-                # 预警逻辑
+                # Beta 漂移预警
                 beta_drift = abs(m['Current_Beta'] - m['Beta'])
                 if beta_drift > 0.1:
                     st.warning(f"⚠️ **风格漂移预警**：当前 Beta ({m['Current_Beta']:.2f}) 与全周期均值 ({m['Beta']:.2f}) 偏差 {beta_drift:.2f} (超过阈值 0.1)，请前往 TAB 2 查看详细漂移路径。")
@@ -213,11 +349,15 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                df_sub_prices = df_db[sel_funds].dropna()
+                # 归因使用的数据源随模式变化
+                if fee_mode == "不考虑费率 (Gross)":
+                    df_attr = df_port # 用原始数据
+                else:
+                    df_attr = net_funds_df # 用费后数据
+
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
-                # 1. 饼图区域
-                growth_factors = df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]
+                growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
                 latest_values = initial_w_series * growth_factors
                 latest_w_series = latest_values / latest_values.sum()
 
@@ -225,22 +365,20 @@ if check_password():
                 col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
                 col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
 
-                # 2. 风格漂移归因图 (v5.7新增)
+                # Beta 漂移图
                 if not m['Rolling_Beta_Series'].empty:
                     st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
                     fig_beta = go.Figure()
                     fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
                     fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值 (初心)")
-                    # 只有当漂移真的很大时才画警戒线
                     if beta_drift > 0.05: 
                          fig_beta.add_hrect(y0=m['Beta']-0.1, y1=m['Beta']+0.1, line_width=0, fillcolor="yellow", opacity=0.1, annotation_text="正常波动区间")
                     fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
                     st.plotly_chart(fig_beta, use_container_width=True)
 
-                # 3. 风险/收益归因
-                df_sub_rets = df_sub_prices.pct_change().fillna(0)
+                df_sub_rets = df_attr.pct_change().fillna(0)
                 risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252))
-                contribution_vals = initial_w_series * ((df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]) - 1)
+                contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
 
                 col_attr1, col_attr2 = st.columns(2)
                 col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因"), use_container_width=True)
@@ -248,18 +386,21 @@ if check_password():
 
                 st.markdown("---")
                 st.markdown("#### 底层产品走势对比")
-                df_sub_norm = df_sub_prices.div(df_sub_prices.iloc[0])
+                df_sub_norm = df_attr.div(df_attr.iloc[0])
                 fig_sub_compare = go.Figure()
                 for col in df_sub_norm.columns:
                     fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6))
+                
+                # 组合线颜色：费后用红，费前用蓝，方便区分
+                line_color = 'red' if fee_mode != "不考虑费率 (Gross)" else 'blue'
                 if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color=line_color, width=4)))
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
                 st.markdown("---")
                 char_data = []
                 for f in sel_funds:
-                    f_metrics = calculate_metrics(df_sub_prices[f], df_db[sel_bench])
+                    f_metrics = calculate_metrics(df_attr[f], df_db[sel_bench])
                     f_metrics['产品'] = f
                     char_data.append(f_metrics)
                 st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="年化收益", title="产品性格象限分布", height=600), use_container_width=True)
@@ -267,7 +408,9 @@ if check_password():
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
-            compare_pool = st.multiselect("搜索池内产品", all_cols, default=[])
+            # 配置池分析默认还是用费前原始数据比较公平，或者您可以根据需求改成也受费率开关控制
+            # 这里暂时保持用【原始费前数据】，因为通常比较产品时看的是基金经理管理能力
+            compare_pool = st.multiselect("搜索池内产品 (费前对比)", all_cols, default=[])
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
@@ -276,7 +419,7 @@ if check_password():
                     for col in compare_pool:
                         s = df_comp[col].dropna()
                         if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
-                    st.plotly_chart(fig_p.update_layout(title="业绩对比", template="plotly_white", height=500), use_container_width=True)
+                    st.plotly_chart(fig_p.update_layout(title="业绩对比 (费前)", template="plotly_white", height=500), use_container_width=True)
                 
                 res_data = []
                 for col in compare_pool:
