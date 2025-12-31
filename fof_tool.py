@@ -82,33 +82,48 @@ if check_password():
             "最大回撤修复时间": mdd_rec, "最大无新高持续时间": max_nh,
             "正收益概率(日)": (returns > 0).sum() / len(returns),
             "dd_series": dd_s,
-            "Beta": 0.0, "Current_Beta": 0.0 # 初始化 Beta
+            "Beta": 0.0, "Current_Beta": 0.0,
+            "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
 
         if bench_nav is not None:
             b_sync = bench_nav.reindex(nav.index).ffill()
             b_rets = b_sync.pct_change().fillna(0)
             
-            # 捕获比率计算
+            # 捕获比率
             up_mask, down_mask = b_rets > 0, b_rets < 0
             up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
             down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
             
-            # Beta 计算 (全周期)
+            # 全周期 Beta
             cov_mat = np.cov(returns, b_rets)
             beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
             
-            # Rolling Beta (最近126个交易日/约半年)
+            # 滚动 Beta 计算 (Window = 126 days ~ 6 months)
             window = 126
+            rolling_betas = []
+            rolling_dates = []
             if len(returns) > window:
-                r_curr = returns.iloc[-window:]
-                b_curr = b_rets.iloc[-window:]
-                cov_curr = np.cov(r_curr, b_curr)
-                curr_beta = cov_curr[0, 1] / cov_curr[1, 1] if cov_curr.shape == (2, 2) and cov_curr[1, 1] != 0 else 0
+                for i in range(window, len(returns)):
+                    r_win = returns.iloc[i-window:i]
+                    b_win = b_rets.iloc[i-window:i]
+                    var_b = b_win.var()
+                    cov_rb = r_win.cov(b_win)
+                    rb = cov_rb / var_b if var_b != 0 else 0
+                    rolling_betas.append(rb)
+                    rolling_dates.append(returns.index[i])
+                
+                curr_beta = rolling_betas[-1]
+                rb_series = pd.Series(rolling_betas, index=rolling_dates)
             else:
                 curr_beta = beta
+                rb_series = pd.Series([beta]*len(returns), index=returns.index)
                 
-            metrics.update({"上行捕获": up_cap, "下行捕获": down_cap, "Beta": beta, "Current_Beta": curr_beta})
+            metrics.update({
+                "上行捕获": up_cap, "下行捕获": down_cap, 
+                "Beta": beta, "Current_Beta": curr_beta,
+                "Rolling_Beta_Series": rb_series
+            })
             
         return metrics
 
@@ -154,12 +169,15 @@ if check_password():
         # ==========================================
         tabs = st.tabs(["🚀 寻星配置组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
+        # 计算指标 (只计算一次，供各TAB使用)
+        if star_nav is not None:
+            m = calculate_metrics(star_nav, bn_sync)
+
         with tabs[0]:
             if star_nav is not None:
                 st.subheader("📊 寻星配置组合全景图")
-                m = calculate_metrics(star_nav, bn_sync) # 传入基准以计算 Beta
                 
-                # 顶部核心指标卡
+                # 顶部核心指标
                 c_top = st.columns(7)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -169,25 +187,25 @@ if check_password():
                 c_top[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
                 c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
                 
-                # 净值走势图
+                # 净值图
                 fig_main = go.Figure()
                 fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name="寻星配置组合", line=dict(color='red', width=4)))
                 fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
                 fig_main.update_layout(title="累计净值走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 下方区域：风险体验 + 风格监控 (新增 Beta 指标)
+                # 风险与风格监控
                 st.markdown("#### 🛡️ 风险体验与风格监控")
-                c_risk = st.columns(4) # 改为4列
+                c_risk = st.columns(4)
                 c_risk[0].metric("最大回撤修复时间", m['最大回撤修复时间'])
                 c_risk[1].metric("最大无新高持续时间", m['最大无新高持续时间'])
                 c_risk[2].metric("日度正收益概率", f"{m['正收益概率(日)']:.1%}")
                 c_risk[3].metric("当前 Beta (近半年)", f"{m['Current_Beta']:.2f}", delta_color="off")
                 
-                # 风格漂移预警逻辑
+                # 预警逻辑
                 beta_drift = abs(m['Current_Beta'] - m['Beta'])
                 if beta_drift > 0.1:
-                    st.warning(f"⚠️ **风格漂移预警**：当前 Beta ({m['Current_Beta']:.2f}) 与全周期均值 ({m['Beta']:.2f}) 偏差 {beta_drift:.2f} (超过阈值 0.1)，建议检查是否需要执行季度调仓！")
+                    st.warning(f"⚠️ **风格漂移预警**：当前 Beta ({m['Current_Beta']:.2f}) 与全周期均值 ({m['Beta']:.2f}) 偏差 {beta_drift:.2f} (超过阈值 0.1)，请前往 TAB 2 查看详细漂移路径。")
 
             else:
                 st.info("👈 请在左侧侧边栏配置组合成分。")
@@ -198,6 +216,7 @@ if check_password():
                 df_sub_prices = df_db[sel_funds].dropna()
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
+                # 1. 饼图区域
                 growth_factors = df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]
                 latest_values = initial_w_series * growth_factors
                 latest_w_series = latest_values / latest_values.sum()
@@ -206,6 +225,19 @@ if check_password():
                 col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例"), use_container_width=True)
                 col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)"), use_container_width=True)
 
+                # 2. 风格漂移归因图 (v5.7新增)
+                if not m['Rolling_Beta_Series'].empty:
+                    st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
+                    fig_beta = go.Figure()
+                    fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
+                    fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值 (初心)")
+                    # 只有当漂移真的很大时才画警戒线
+                    if beta_drift > 0.05: 
+                         fig_beta.add_hrect(y0=m['Beta']-0.1, y1=m['Beta']+0.1, line_width=0, fillcolor="yellow", opacity=0.1, annotation_text="正常波动区间")
+                    fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
+                    st.plotly_chart(fig_beta, use_container_width=True)
+
+                # 3. 风险/收益归因
                 df_sub_rets = df_sub_prices.pct_change().fillna(0)
                 risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252))
                 contribution_vals = initial_w_series * ((df_sub_prices.iloc[-1] / df_sub_prices.iloc[0]) - 1)
