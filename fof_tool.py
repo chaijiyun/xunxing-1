@@ -64,7 +64,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.18</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v5.19</h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -279,7 +279,7 @@ if check_password():
                 df_fee_edit, 
                 use_container_width=True,
                 height=200,
-                key="fee_editor_v518",
+                key="fee_editor_v519",
                 hide_index=True
             )
             
@@ -471,11 +471,9 @@ if check_password():
                 df_sub_norm = df_attr.div(df_attr.iloc[0])
                 fig_sub_compare = go.Figure()
                 
-                # 画底层细线
                 for col in df_sub_norm.columns:
                     fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
                 
-                # [v5.18 修改] 强制红色粗线
                 if star_nav is not None:
                     fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 
@@ -509,19 +507,45 @@ if check_password():
                         if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
                     st.plotly_chart(fig_p.update_layout(title="业绩对比 (费前)", template="plotly_white", height=500), use_container_width=True)
                 
+                    # === 1. 核心指标表格 ===
                     res_data = []
                     for col in compare_pool:
                         k = calculate_metrics(df_comp[col]) 
                         if k: 
                             res_data.append({
-                                "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化": f"{k['年化收益']:.2%}", 
-                                "回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
+                                "产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", 
+                                "最大回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), 
                                 "索提诺": round(k['索提诺比率'], 2), "卡玛": round(k['卡玛比率'], 2), 
-                                "波动": f"{k['年化波动率']:.2%}", 
+                                "波动率": f"{k['年化波动率']:.2%}", 
                                 "最大回撤修复时间": k['最大回撤修复时间'], "最大无新高持续时间": k['最大无新高持续时间']
                             })
                     if res_data:
                         st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
+                    
+                    # === 2. [v5.19 新增] 分年度收益统计表 ===
+                    st.markdown("#### 📅 分年度收益率统计")
+                    yearly_data = {}
+                    for col in compare_pool:
+                        # 确保只使用对齐后的数据段进行统计
+                        s = df_comp[col].dropna()
+                        # 按年份分组统计 (兼容性最强的写法)
+                        groups = s.groupby(s.index.year)
+                        y_vals = {}
+                        for year, group in groups:
+                            # 计算该年度内的涨跌幅：(年末/年初 - 1)
+                            # 注意：如果某年数据不完整(如1月到6月)，这里算的是这半年的收益
+                            ret = (group.iloc[-1] / group.iloc[0]) - 1
+                            y_vals[year] = ret
+                        yearly_data[col] = y_vals
+                    
+                    if yearly_data:
+                        # 转置：行=产品，列=年份
+                        df_year_disp = pd.DataFrame(yearly_data).T.sort_index()
+                        # 格式化显示
+                        st.dataframe(df_year_disp.style.format("{:.2%}"), use_container_width=True)
+                    else:
+                        st.info("暂无足够的年度数据可供统计。")
+
                 else:
                     st.warning("⚠️ 所选产品在当前时间段内没有重合数据，无法对齐比较。")
             else:
