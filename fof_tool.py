@@ -43,7 +43,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.5 <small>(Stable)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.6 <small>(Fix Loop)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -194,8 +194,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.5", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.1.5 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.6", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.1.6 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -205,7 +205,7 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === 配置中心 (v6.1.5：openpyxl 全量备份) ===
+        # === 配置中心 (v6.1.6 Fix Loop：openpyxl 全量备份 + 移除 rerun) ===
         with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
             st.info("💡 系统采用 Excel 全量备份，包含费率与组合。")
             
@@ -226,7 +226,7 @@ if check_password():
                     except:
                         st.toast("⚠️ 仅恢复了费率，未找到组合数据。", icon="ℹ️")
                     
-                    st.rerun()
+                    # 关键修改：删除了 st.rerun()，防止无限循环
                 except Exception as e:
                     st.error(f"恢复失败: {e}")
 
@@ -465,7 +465,6 @@ if check_password():
             pool_options = [c for c in all_cols if c != sel_bench]
             pool_options.sort()
             compare_pool = st.multiselect("搜索池内产品 (费前对比)", pool_options, default=[])
-            
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
                 df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
@@ -491,6 +490,5 @@ if check_password():
                         for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
                         yearly_data[col] = y_vals
                     if yearly_data: st.dataframe(pd.DataFrame(yearly_data).T.sort_index().style.format("{:.2%}"), use_container_width=True)
-                else: st.warning("⚠️ 所选产品在当前时间段内没有重合数据，无法对齐比较。")
-            else: st.info("👆 请先在上方选择需要对比的产品。")
+                else: st.warning("⚠️ 数据不足")
     else: st.info("👋 请上传‘产品数据库’。")
