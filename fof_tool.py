@@ -3,16 +3,12 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-import os
+import io
 from datetime import datetime
 
 # ==========================================
 # 0. 全局配置与存储架构 (CTO层)
 # ==========================================
-# 定义主数据文件路径
-MASTER_CONFIG_PATH = 'config_master_data.csv'
-PORTFOLIO_CONFIG_PATH = 'config_portfolios_saved.csv'
-
 # 默认主数据 (含费率+流动性参数)
 PRESET_MASTER_DEFAULT = [
     {"产品名称": "合绎期权套利", "年管理费(%)": 0.0, "业绩报酬(%)": 30.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5},
@@ -33,31 +29,11 @@ PRESET_MASTER_DEFAULT = [
 ]
 DEFAULT_MASTER_ROW = {"年管理费(%)": 0.0, "业绩报酬(%)": 20.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5}
 
-# 加载主数据
-def load_master_data():
-    if os.path.exists(MASTER_CONFIG_PATH):
-        try:
-            return pd.read_csv(MASTER_CONFIG_PATH)
-        except:
-            return pd.DataFrame(PRESET_MASTER_DEFAULT)
-    else:
-        return pd.DataFrame(PRESET_MASTER_DEFAULT)
-
-# 加载组合数据
-def load_portfolio_data():
-    if os.path.exists(PORTFOLIO_CONFIG_PATH):
-        try:
-            return pd.read_csv(PORTFOLIO_CONFIG_PATH)
-        except:
-            return pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
-    else:
-        return pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
-
 # 初始化Session
 if 'master_data' not in st.session_state:
-    st.session_state.master_data = load_master_data()
+    st.session_state.master_data = pd.DataFrame(PRESET_MASTER_DEFAULT)
 if 'portfolios_data' not in st.session_state:
-    st.session_state.portfolios_data = load_portfolio_data()
+    st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
 
 # ==========================================
 # 1. 登录验证模块
@@ -67,7 +43,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.1 <small>(Fix GBK)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.4 <small>(Ultimate)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -84,7 +60,7 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 2. 核心计算引擎 (保持 v5.20 全部逻辑)
+    # 2. 核心计算引擎 (完全体)
     # ==========================================
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
         if gross_nav_series.empty: return gross_nav_series
@@ -172,6 +148,8 @@ if check_password():
             down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
             cov_mat = np.cov(returns, b_rets)
             beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
+            
+            # Beta 滚动计算逻辑 (保持完整)
             window = 126
             rolling_betas = []
             rolling_dates = []
@@ -196,7 +174,6 @@ if check_password():
             })
         return metrics
 
-    # 2.4 [CIO风控] 流动性雷达 (v6.1新增)
     def calculate_liquidity_risk(weights, master_df):
         w_series = pd.Series(weights)
         w_norm = w_series / w_series.sum()
@@ -217,9 +194,9 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.1.1 · 驾驶舱")
-    uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库", type=["xlsx"])
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.4", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.1.4 · 驾驶舱")
+    uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
         df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
@@ -228,36 +205,30 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === 配置中心 (整合了费率、流动性和备份) ===
-        with st.sidebar.expander("⚙️ 系统配置中心 (费率/流动性/备份)", expanded=False):
-            st.info("💡 所有配置修改都在本地暂存，请定期下载备份。")
+        # === 配置中心 (v6.1.4：Excel 全量备份) ===
+        with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
+            st.info("💡 系统采用 Excel 全量备份，包含费率与组合。")
             
-            # 备份恢复 (v6.1.1 增强版：兼容 Excel GBK 编码)
+            # --- 备份恢复 (Excel 版) ---
             col_bk1, col_bk2 = st.columns(2)
-            uploaded_backup = col_bk1.file_uploader("📥 恢复备份", type=['csv'])
+            uploaded_backup = col_bk1.file_uploader("📥 恢复全量备份", type=['xlsx'])
             if uploaded_backup:
                 try:
-                    # 尝试 1: 标准 UTF-8 读取
-                    df_backup = pd.read_csv(uploaded_backup)
-                except UnicodeDecodeError:
-                    # 尝试 2: 失败了？那试试 GBK (Excel 格式)
-                    uploaded_backup.seek(0) # 重置指针
-                    df_backup = pd.read_csv(uploaded_backup, encoding='gbk')
+                    # 读取 Master Sheet
+                    df_master_new = pd.read_excel(uploaded_backup, sheet_name='Master_Data')
+                    st.session_state.master_data = df_master_new
+                    
+                    # 读取 Portfolios Sheet (尝试读取，如果没有也不报错)
+                    try:
+                        df_port_new = pd.read_excel(uploaded_backup, sheet_name='Portfolios')
+                        st.session_state.portfolios_data = df_port_new
+                        st.toast("✅ 费率与组合数据已全部恢复！", icon="🎉")
+                    except:
+                        st.toast("⚠️ 仅恢复了费率，未找到组合数据。", icon="ℹ️")
+                    
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"文件读取未知错误: {e}")
-                    df_backup = None
-
-                # 校验数据结构 (防止传错文件)
-                if df_backup is not None:
-                    required_cols = ['产品名称', '年管理费(%)', '业绩报酬(%)']
-                    if all(col in df_backup.columns for col in required_cols):
-                        st.session_state.master_data = df_backup
-                        # 保存到本地，防止重置 (强制转为 UTF-8 sig，避免下次兼容问题)
-                        df_backup.to_csv(MASTER_CONFIG_PATH, index=False, encoding='utf-8-sig')
-                        st.toast("✅ 配置已成功恢复！(已兼容Excel格式)", icon="🎉")
-                        st.rerun()
-                    else:
-                        st.error("❌ 备份文件内容不匹配！请确保上传的是‘系统配置’备份，而不是其他表格。")
+                    st.error(f"恢复失败: {e}")
 
             # 主数据编辑
             current_products = st.session_state.master_data['产品名称'].tolist()
@@ -273,25 +244,33 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v6"
+                use_container_width=True, hide_index=True, key="master_editor_v614"
             )
-            # 实时保存修改
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
-                edited_master.to_csv(MASTER_CONFIG_PATH, index=False, encoding='utf-8-sig')
             
-            # 下载备份
-            csv_master = st.session_state.master_data.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("💾 下载配置备份 (防丢失)", csv_master, "寻星_系统配置备份.csv", "text/csv")
+            # --- 下载全量备份 (Excel 版) ---
+            # 使用 BytesIO 生成内存中的 Excel 文件
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                st.session_state.master_data.to_excel(writer, sheet_name='Master_Data', index=False)
+                st.session_state.portfolios_data.to_excel(writer, sheet_name='Portfolios', index=False)
             
-            # 字典化加速查询
+            st.download_button(
+                label="💾 下载全量数据备份 (.xlsx)",
+                data=buffer,
+                file_name="寻星_全量系统备份.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # 字典化
             MASTER_DICT = {}
             for _, row in st.session_state.master_data.iterrows():
                 MASTER_DICT[row['产品名称']] = row.to_dict()
 
         st.sidebar.markdown("---")
         
-        # === 组合管理 (v5.20 逻辑) ===
+        # === 组合管理 (保持逻辑) ===
         st.sidebar.markdown("### 💼 组合配置")
         saved_names = st.session_state.portfolios_data['组合名称'].unique().tolist() if not st.session_state.portfolios_data.empty else []
         mode_options = ["🛠️ 自定义/新建"] + saved_names
@@ -320,8 +299,7 @@ if check_password():
                             new_df = pd.DataFrame(new_records)
                             updated_df = pd.concat([old_df[old_df['组合名称']!=new_p_name], new_df], ignore_index=True)
                             st.session_state.portfolios_data = updated_df
-                            updated_df.to_csv(PORTFOLIO_CONFIG_PATH, index=False)
-                            st.toast(f"组合 {new_p_name} 已保存", icon="✅")
+                            st.toast(f"组合 {new_p_name} 已保存 (请记得下载备份)", icon="✅")
                             st.rerun()
         else:
             subset = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] == selected_mode]
@@ -332,7 +310,6 @@ if check_password():
             if st.sidebar.button("🗑️ 删除此组合"):
                 updated = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] != selected_mode]
                 st.session_state.portfolios_data = updated
-                updated.to_csv(PORTFOLIO_CONFIG_PATH, index=False)
                 st.rerun()
 
         # 颜色与费率模式
@@ -381,13 +358,12 @@ if check_password():
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
         # ==========================================
-        # Tabs 可视化 (v5.20 100% 还原)
+        # Tabs 可视化 (v6.1一致)
         # ==========================================
         tabs = st.tabs(["🚀 组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
-            # 计算流动性指标
             avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(weights, st.session_state.master_data)
 
         with tabs[0]:
@@ -420,7 +396,7 @@ if check_password():
 
                 # 风控行
                 st.markdown("#### 🛡️ 风险体验与风格监控")
-                c_risk = st.columns(5) # 增加一列给流动性
+                c_risk = st.columns(5) 
                 c_risk[0].metric("最大回撤修复", m['最大回撤修复时间'])
                 c_risk[1].metric("最长创新高间隔", m['最大无新高持续时间'])
                 c_risk[2].metric("日胜率", f"{m['正收益概率(日)']:.1%}")
@@ -439,7 +415,6 @@ if check_password():
                 st.subheader("🔍 寻星配置穿透归因分析")
                 if fee_mode_label == "组合策略表现 (底层净值)": df_attr = df_port
                 else: df_attr = net_funds_df
-                
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
                 latest_values = initial_w_series * growth_factors
