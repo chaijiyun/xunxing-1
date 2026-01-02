@@ -67,7 +67,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1 <small>(Stable)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.1 <small>(Fix GBK)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -196,7 +196,7 @@ if check_password():
             })
         return metrics
 
-    # 2.4 [CIO风控] 流动性雷达 (新增函数)
+    # 2.4 [CIO风控] 流动性雷达 (v6.1新增)
     def calculate_liquidity_risk(weights, master_df):
         w_series = pd.Series(weights)
         w_norm = w_series / w_series.sum()
@@ -217,8 +217,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.1.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库", type=["xlsx"])
 
     if uploaded_file:
@@ -232,18 +232,32 @@ if check_password():
         with st.sidebar.expander("⚙️ 系统配置中心 (费率/流动性/备份)", expanded=False):
             st.info("💡 所有配置修改都在本地暂存，请定期下载备份。")
             
-            # 备份恢复
+            # 备份恢复 (v6.1.1 增强版：兼容 Excel GBK 编码)
             col_bk1, col_bk2 = st.columns(2)
             uploaded_backup = col_bk1.file_uploader("📥 恢复备份", type=['csv'])
             if uploaded_backup:
                 try:
+                    # 尝试 1: 标准 UTF-8 读取
                     df_backup = pd.read_csv(uploaded_backup)
-                    st.session_state.master_data = df_backup
-                    # 保存到本地文件
-                    df_backup.to_csv(MASTER_CONFIG_PATH, index=False)
-                    st.toast("配置已恢复！", icon="✅")
-                    st.rerun()
-                except: st.error("备份文件格式错误")
+                except UnicodeDecodeError:
+                    # 尝试 2: 失败了？那试试 GBK (Excel 格式)
+                    uploaded_backup.seek(0) # 重置指针
+                    df_backup = pd.read_csv(uploaded_backup, encoding='gbk')
+                except Exception as e:
+                    st.error(f"文件读取未知错误: {e}")
+                    df_backup = None
+
+                # 校验数据结构 (防止传错文件)
+                if df_backup is not None:
+                    required_cols = ['产品名称', '年管理费(%)', '业绩报酬(%)']
+                    if all(col in df_backup.columns for col in required_cols):
+                        st.session_state.master_data = df_backup
+                        # 保存到本地，防止重置 (强制转为 UTF-8 sig，避免下次兼容问题)
+                        df_backup.to_csv(MASTER_CONFIG_PATH, index=False, encoding='utf-8-sig')
+                        st.toast("✅ 配置已成功恢复！(已兼容Excel格式)", icon="🎉")
+                        st.rerun()
+                    else:
+                        st.error("❌ 备份文件内容不匹配！请确保上传的是‘系统配置’备份，而不是其他表格。")
 
             # 主数据编辑
             current_products = st.session_state.master_data['产品名称'].tolist()
@@ -264,7 +278,7 @@ if check_password():
             # 实时保存修改
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
-                edited_master.to_csv(MASTER_CONFIG_PATH, index=False)
+                edited_master.to_csv(MASTER_CONFIG_PATH, index=False, encoding='utf-8-sig')
             
             # 下载备份
             csv_master = st.session_state.master_data.to_csv(index=False).encode('utf-8-sig')
