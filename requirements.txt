@@ -1,6 +1,8 @@
+Plaintext
+
 streamlit
 pandas
 numpy
 plotly
 openpyxl
-matplotlib
+xlsxwriter
