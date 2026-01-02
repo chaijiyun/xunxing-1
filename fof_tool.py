@@ -43,7 +43,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.4 <small>(Ultimate)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.5 <small>(Stable)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -194,8 +194,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.4", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.1.4 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.5", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.1.5 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -205,7 +205,7 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === 配置中心 (v6.1.4：Excel 全量备份) ===
+        # === 配置中心 (v6.1.5：openpyxl 全量备份) ===
         with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
             st.info("💡 系统采用 Excel 全量备份，包含费率与组合。")
             
@@ -249,10 +249,11 @@ if check_password():
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
             
-            # --- 下载全量备份 (Excel 版) ---
+            # --- 下载全量备份 (Excel 版 - 修复引擎为 openpyxl) ---
             # 使用 BytesIO 生成内存中的 Excel 文件
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            # 关键修改：使用 openpyxl 引擎，避免云端安装 xlsxwriter 失败
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 st.session_state.master_data.to_excel(writer, sheet_name='Master_Data', index=False)
                 st.session_state.portfolios_data.to_excel(writer, sheet_name='Portfolios', index=False)
             
