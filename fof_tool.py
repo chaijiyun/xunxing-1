@@ -43,7 +43,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.1.6 <small>(Fix Loop)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.0 <small>(Pro Kernel)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -60,40 +60,65 @@ def check_password():
 
 if check_password():
     # ==========================================
-    # 2. 核心计算引擎 (完全体)
+    # 2. 核心计算引擎 (架构师重构版)
     # ==========================================
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
+        """
+        [Core Logic Updated] 影子债务计提 (Shadow Liability Model)
+        逻辑：
+        1. 管理费 (Mgmt Fee)：按日自然流逝扣除 (Time Decay)。
+        2. 业绩报酬 (Perf Fee)：点对点计提 (Point-to-Point)，即假设当日赎回，
+           基于 (当前扣管费后净值 - 初始成本1.0) 的正收益部分计算负债。
+        """
         if gross_nav_series.empty: return gross_nav_series
-        base_nav = gross_nav_series.iloc[0]
-        gross_norm = gross_nav_series / base_nav
-        net_nav = [1.0]
-        high_water_mark = 1.0
+        
+        # 预处理数据
         dates = gross_nav_series.index
-        gross_returns = gross_norm.pct_change().fillna(0)
-        days_diff = (dates[-1] - dates[0]).days
-        periods = len(dates)
-        avg_days = days_diff / periods if periods > 0 else 7
-        freq_factor = 365.0 / avg_days if avg_days > 0 else 52.0
+        gross_vals = gross_nav_series.values
+        base_nav = gross_vals[0]
+        gross_norm = gross_vals / base_nav # 归一化为 1.0 起点
+        
+        # 容器初始化
+        nav_after_mgmt = np.zeros(len(gross_vals))
+        nav_after_mgmt[0] = 1.0
+        shadow_net_vals = np.zeros(len(gross_vals))
+        shadow_net_vals[0] = 1.0
+        
+        prev_date = dates[0]
+        
+        # 阶段 1: 扣除管理费 (时间相关，需循环计算路径)
+        for i in range(1, len(gross_vals)):
+            # 区间收益
+            r_interval = gross_norm[i] / gross_norm[i-1] - 1
+            
+            # 计算天数差 (Act/365)
+            curr_date = dates[i]
+            days_delta = (curr_date - prev_date).days
+            mgmt_cost = mgmt_fee_rate * (days_delta / 365.0)
+            
+            # 扣除管理费后的累积净值
+            nav_after_mgmt[i] = nav_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
+            prev_date = curr_date
 
-        for i in range(1, len(gross_returns)):
-            r_gross = gross_returns.iloc[i]
-            mgmt_cost = mgmt_fee_rate / freq_factor
-            nav_after_mgmt = net_nav[-1] * (1 + r_gross - mgmt_cost)
-            fee_perf = 0.0
-            if nav_after_mgmt > high_water_mark:
-                excess = nav_after_mgmt - high_water_mark
-                fee_perf = excess * perf_fee_rate
-                high_water_mark = nav_after_mgmt - fee_perf 
-            nav_final = nav_after_mgmt - fee_perf
-            if nav_final < 0: nav_final = 0
-            net_nav.append(nav_final)
-        return pd.Series(net_nav, index=dates)
+        # 阶段 2: 扣除业绩报酬 (影子负债，向量化计算)
+        # 逻辑: Liability = Max(0, (Nav_Mgmt - 1.0) * Rate)
+        # 注意：这里假设 Cost Basis 始终为 1.0 (点对点)
+        profits = nav_after_mgmt - 1.0
+        liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
+        
+        shadow_net_vals = nav_after_mgmt - liabilities
+        
+        # 防止极端费率导致负值
+        shadow_net_vals = np.maximum(shadow_net_vals, 0)
+
+        # 还原绝对金额 (如果原数据起点不是1)
+        return pd.Series(shadow_net_vals * base_nav, index=dates)
 
     def get_drawdown_details(nav_series):
         if nav_series.empty or len(nav_series) < 2: 
             return "数据不足", "数据不足", pd.Series(dtype='float64')
         cummax = nav_series.cummax()
-        drawdown = (nav_series / cummax) - 1
+        drawdown = (nav_series - cummax) / cummax # 向量化优化
         mdd_val = drawdown.min()
         if mdd_val == 0:
             mdd_recovery = "无回撤"
@@ -115,21 +140,55 @@ if check_password():
         return mdd_recovery, max_no_new_high, drawdown
 
     def calculate_metrics(nav, bench_nav=None):
+        """
+        [Core Logic Updated] 智能指标计算
+        Updates:
+        1. 动态频率侦测 (Smart Frequency Detect)
+        2. Rf = 1.9% (China 10Y CGB)
+        3. Beta 计算使用 Inner Join 对齐
+        """
         nav = nav.dropna()
         if len(nav) < 2: return {}
-        returns = nav.pct_change().fillna(0)
+        
+        # 1. 频率与年化因子推断
+        dates = nav.index
+        days_diff = (dates[-1] - dates[0]).days
+        if days_diff <= 0: return {}
+        
+        count = len(dates) - 1
+        avg_interval = days_diff / count if count > 0 else 1
+        
+        # 智能判定年化因子
+        if avg_interval <= 1.5: freq_factor = 252.0   # 日频
+        elif avg_interval <= 8: freq_factor = 52.0    # 周频
+        elif avg_interval <= 35: freq_factor = 12.0   # 月频
+        else: freq_factor = 252.0 / avg_interval      # 其他
+        
+        # 2. 基础指标
+        returns = nav.pct_change().dropna()
         total_ret = (nav.iloc[-1] / nav.iloc[0]) - 1
-        days_count = (nav.index[-1] - nav.index[0]).days
-        ann_ret = (nav.iloc[-1] / nav.iloc[0]) ** (365.25 / max(days_count, 1)) - 1
-        vol = returns.std() * np.sqrt(252)
-        mdd = (nav / nav.cummax() - 1).min()
-        rf = 0.02
-        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
-        downside_returns = returns[returns < 0]
-        downside_std = downside_returns.std() * np.sqrt(252) if not downside_returns.empty else 0.0001
-        sortino = (ann_ret - rf) / downside_std if downside_std > 0 else 0
-        calmar = ann_ret / abs(mdd) if mdd != 0 else 0
+        
+        # 几何年化收益 (CAGR)
+        ann_ret = (1 + total_ret) ** (365.25 / days_diff) - 1
+        
+        # 年化波动率 (修正: 基于侦测频率)
+        vol = returns.std() * np.sqrt(freq_factor)
+        
+        # 回撤
         mdd_rec, max_nh, dd_s = get_drawdown_details(nav)
+        mdd = dd_s.min()
+        
+        # 3. 风险调整收益 (Rf = 1.9%)
+        rf = 0.019
+        # 夏普: (Ann_Ret - Rf) / Ann_Vol
+        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
+        
+        # 索提诺: 下行标准差
+        downside_returns = returns[returns < 0]
+        downside_std = downside_returns.std() * np.sqrt(freq_factor) if not downside_returns.empty else 1e-6
+        sortino = (ann_ret - rf) / downside_std
+        
+        calmar = ann_ret / abs(mdd) if mdd != 0 else 0
         
         metrics = {
             "总收益率": total_ret, "年化收益": ann_ret, "最大回撤": mdd, 
@@ -140,38 +199,57 @@ if check_password():
             "Beta": 0.0, "Current_Beta": 0.0,
             "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
+        
+        # 4. Beta 计算 (修正: Inner Join 对齐)
         if bench_nav is not None:
-            b_sync = bench_nav.reindex(nav.index).ffill()
-            b_rets = b_sync.pct_change().fillna(0)
-            up_mask, down_mask = b_rets > 0, b_rets < 0
-            up_cap = (returns[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() else 0
-            down_cap = (returns[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() else 0
-            cov_mat = np.cov(returns, b_rets)
-            beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
-            
-            # Beta 滚动计算逻辑 (保持完整)
-            window = 126
-            rolling_betas = []
-            rolling_dates = []
-            if len(returns) > window:
-                for i in range(window, len(returns)):
-                    r_win = returns.iloc[i-window:i]
-                    b_win = b_rets.iloc[i-window:i]
-                    var_b = b_win.var()
-                    cov_rb = r_win.cov(b_win)
-                    rb = cov_rb / var_b if var_b != 0 else 0
-                    rolling_betas.append(rb)
-                    rolling_dates.append(returns.index[i])
-                curr_beta = rolling_betas[-1]
-                rb_series = pd.Series(rolling_betas, index=rolling_dates)
-            else:
-                curr_beta = beta
-                rb_series = pd.Series([beta]*len(returns), index=returns.index)
-            metrics.update({
-                "上行捕获": up_cap, "下行捕获": down_cap, 
-                "Beta": beta, "Current_Beta": curr_beta,
-                "Rolling_Beta_Series": rb_series
-            })
+            # 仅取日期交集
+            common_idx = nav.index.intersection(bench_nav.index)
+            if len(common_idx) > 10:
+                p_rets = nav.loc[common_idx].pct_change().dropna()
+                b_rets = bench_nav.loc[common_idx].pct_change().dropna()
+                
+                # 二次对齐 (pct_change后第一天可能是NaN)
+                valid_idx = p_rets.index.intersection(b_rets.index)
+                p_rets = p_rets.loc[valid_idx]
+                b_rets = b_rets.loc[valid_idx]
+                
+                if not p_rets.empty:
+                    cov_mat = np.cov(p_rets, b_rets)
+                    beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
+                    
+                    # Beta 滚动计算逻辑
+                    window = int(freq_factor / 2) # 半年窗口
+                    if window < 10: window = 10
+                    
+                    rolling_betas = []
+                    rolling_dates = []
+                    
+                    if len(p_rets) > window:
+                        for i in range(window, len(p_rets)):
+                            r_win = p_rets.iloc[i-window:i]
+                            b_win = b_rets.iloc[i-window:i]
+                            var_b = b_win.var()
+                            cov_rb = r_win.cov(b_win)
+                            rb = cov_rb / var_b if var_b != 0 else 0
+                            rolling_betas.append(rb)
+                            rolling_dates.append(p_rets.index[i])
+                        curr_beta = rolling_betas[-1] if rolling_betas else beta
+                        rb_series = pd.Series(rolling_betas, index=rolling_dates)
+                    else:
+                        curr_beta = beta
+                        rb_series = pd.Series([beta]*len(p_rets), index=p_rets.index)
+                    
+                    # 上下行捕获
+                    up_mask = b_rets > 0
+                    down_mask = b_rets < 0
+                    up_cap = (p_rets[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() and b_rets[up_mask].mean() != 0 else 0
+                    down_cap = (p_rets[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() and b_rets[down_mask].mean() != 0 else 0
+
+                    metrics.update({
+                        "上行捕获": up_cap, "下行捕获": down_cap, 
+                        "Beta": beta, "Current_Beta": curr_beta,
+                        "Rolling_Beta_Series": rb_series
+                    })
         return metrics
 
     def calculate_liquidity_risk(weights, master_df):
@@ -194,8 +272,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.1.6", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.1.6 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -205,28 +283,23 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === 配置中心 (v6.1.6 Fix Loop：openpyxl 全量备份 + 移除 rerun) ===
+        # === 配置中心 ===
         with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
             st.info("💡 系统采用 Excel 全量备份，包含费率与组合。")
             
-            # --- 备份恢复 (Excel 版) ---
+            # --- 备份恢复 ---
             col_bk1, col_bk2 = st.columns(2)
             uploaded_backup = col_bk1.file_uploader("📥 恢复全量备份", type=['xlsx'])
             if uploaded_backup:
                 try:
-                    # 读取 Master Sheet
                     df_master_new = pd.read_excel(uploaded_backup, sheet_name='Master_Data')
                     st.session_state.master_data = df_master_new
-                    
-                    # 读取 Portfolios Sheet (尝试读取，如果没有也不报错)
                     try:
                         df_port_new = pd.read_excel(uploaded_backup, sheet_name='Portfolios')
                         st.session_state.portfolios_data = df_port_new
                         st.toast("✅ 费率与组合数据已全部恢复！", icon="🎉")
                     except:
                         st.toast("⚠️ 仅恢复了费率，未找到组合数据。", icon="ℹ️")
-                    
-                    # 关键修改：删除了 st.rerun()，防止无限循环
                 except Exception as e:
                     st.error(f"恢复失败: {e}")
 
@@ -244,15 +317,13 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v614"
+                use_container_width=True, hide_index=True, key="master_editor_v620"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
             
-            # --- 下载全量备份 (Excel 版 - 修复引擎为 openpyxl) ---
-            # 使用 BytesIO 生成内存中的 Excel 文件
+            # --- 下载备份 ---
             buffer = io.BytesIO()
-            # 关键修改：使用 openpyxl 引擎，避免云端安装 xlsxwriter 失败
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 st.session_state.master_data.to_excel(writer, sheet_name='Master_Data', index=False)
                 st.session_state.portfolios_data.to_excel(writer, sheet_name='Portfolios', index=False)
@@ -271,7 +342,7 @@ if check_password():
 
         st.sidebar.markdown("---")
         
-        # === 组合管理 (保持逻辑) ===
+        # === 组合管理 ===
         st.sidebar.markdown("### 💼 组合配置")
         saved_names = st.session_state.portfolios_data['组合名称'].unique().tolist() if not st.session_state.portfolios_data.empty else []
         mode_options = ["🛠️ 自定义/新建"] + saved_names
@@ -300,7 +371,7 @@ if check_password():
                             new_df = pd.DataFrame(new_records)
                             updated_df = pd.concat([old_df[old_df['组合名称']!=new_p_name], new_df], ignore_index=True)
                             st.session_state.portfolios_data = updated_df
-                            st.toast(f"组合 {new_p_name} 已保存 (请记得下载备份)", icon="✅")
+                            st.toast(f"组合 {new_p_name} 已保存", icon="✅")
                             st.rerun()
         else:
             subset = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] == selected_mode]
@@ -340,16 +411,16 @@ if check_password():
                 star_nav_gross = (1 + star_rets_gross).cumprod()
                 star_nav_gross.name = "组合策略表现 (底层净值)"
 
-                # Net
+                # Net (Updated to Shadow Liability Model)
                 if fee_mode_label != "组合策略表现 (底层净值)":
                     net_funds_df = pd.DataFrame(index=df_port.index)
                     for f in sel_funds:
                         gross_series = df_port[f]
-                        # 核心修改：从主数据字典获取费率
                         info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
                         mgmt = info.get('年管理费(%)', 0) / 100.0
                         perf = info.get('业绩报酬(%)', 0) / 100.0
                         net_funds_df[f] = calculate_net_nav_series(gross_series, mgmt, perf)
+                    
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
                     star_nav_net.name = "客户实得回报 (费后)"
@@ -359,7 +430,7 @@ if check_password():
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
         # ==========================================
-        # Tabs 可视化 (v6.1一致)
+        # Tabs 可视化
         # ==========================================
         tabs = st.tabs(["🚀 组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
@@ -371,7 +442,7 @@ if check_password():
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
                 
-                # 指标行 (保持 v5.20 7个指标)
+                # 指标行
                 c_top = st.columns(7)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -391,7 +462,10 @@ if check_password():
                     st.info(f"💡 **成本分析**：在此期间，组合的策略运作与配置服务成本约为 **{loss_amt:.3f}** (费效比 {loss_pct:.2%})。")
                 else:
                     fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
-                fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#9CA3AF', dash='dot')))
+                
+                # [Visual Update] 基准线改为深灰色实线，增强对比
+                fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#1F2937', width=2, dash='solid'), opacity=0.6))
+                
                 fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
@@ -434,7 +508,7 @@ if check_password():
                     st.plotly_chart(fig_beta, use_container_width=True)
 
                 df_sub_rets = df_attr.pct_change().fillna(0)
-                risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252))
+                risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) # 归因暂保留252作为相对参考
                 contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
 
                 col_attr1, col_attr2 = st.columns(2)
@@ -458,7 +532,9 @@ if check_password():
                     f_metrics['产品'] = f
                     char_data.append(f_metrics)
                 st.plotly_chart(px.scatter(pd.DataFrame(char_data), x="下行捕获", y="上行捕获", size="年化收益", text="产品", color="产品", color_discrete_map=color_map, title="产品性格象限分布", height=600), use_container_width=True)
-                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', title="产品相关性矩阵", height=600), use_container_width=True)
+                
+                # [Visual Update] 相关性热力图：锁定范围 -1 到 1，防止视觉误导
+                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
 
         with tabs[2]:
             st.subheader("⚔️ 配置池产品分析")
