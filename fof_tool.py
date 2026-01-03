@@ -9,7 +9,6 @@ from datetime import datetime
 # ==========================================
 # 0. 全局配置与存储架构 (CTO层)
 # ==========================================
-# [保留] 完整的产品预设列表
 PRESET_MASTER_DEFAULT = [
     {"产品名称": "合绎期权套利", "年管理费(%)": 0.0, "业绩报酬(%)": 30.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5},
     {"产品名称": "平方和多策略6号(市场中性+多策略）", "年管理费(%)": 0.0, "业绩报酬(%)": 18.0, "开放频率": "月度", "锁定期(月)": 0, "赎回效率(T+n)": 5},
@@ -43,7 +42,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.3 <small>(Fix & Polish)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.5 <small>(Glossary Added)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -240,8 +239,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.3", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.3 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.5", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.5 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -283,7 +282,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v623"
+                use_container_width=True, hide_index=True, key="master_editor_v625"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -508,18 +507,17 @@ if check_password():
                     
                     res_data = []
                     for col in compare_pool:
-                        # [Fix] 传入基准以获得完整指标
                         k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
                         if k: 
                             res_data.append({
                                 "产品名称": col, 
-                                "总收益": f"{k['总收益率']:.2%}",       # [Fixed] 补回总收益
+                                "总收益": f"{k['总收益率']:.2%}",
                                 "年化收益": f"{k['年化收益']:.2%}", 
-                                "最大回撤": f"{k['最大回撤']:.2%}",       # [Fixed] 顺序调整
-                                "夏普": round(k['夏普比率'], 2),          # [Fixed] 顺序调整
+                                "最大回撤": f"{k['最大回撤']:.2%}",
+                                "夏普": round(k['夏普比率'], 2),
                                 "盈亏比": f"{k['盈亏比']:.2f}",
                                 "胜率": f"{k['正收益概率(日)']:.1%}",
-                                "VaR(95%)": f"{k['VaR(95%)']:.2%}",    # [Fixed] 补上尾部风险
+                                "VaR(95%)": f"{k['VaR(95%)']:.2%}",
                                 "上行捕获": f"{k['上行捕获']:.2f}",
                                 "下行捕获": f"{k['下行捕获']:.2f}",
                                 "Alpha": f"{k['Alpha']:.2%}",
@@ -538,13 +536,13 @@ if check_password():
                         yearly_data[col] = y_vals
                     
                     if yearly_data:
-                        # [Fixed] 排序逻辑
                         df_yearly = pd.DataFrame(yearly_data).T
                         df_yearly = df_yearly[sorted(df_yearly.columns)]
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
-                        
                 else: st.warning("⚠️ 数据不足")
-                    st.markdown("---")
+            
+            # [Added] CIO Glossary
+            st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
                 st.markdown("""
                 ### 1. 核心收益指标
@@ -570,6 +568,4 @@ if check_password():
                     * **下行**：市场跌 1% 他跌多少？（希望 < 50%）
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
-                    
     else: st.info("👋 请上传‘产品数据库’。")
-
