@@ -42,7 +42,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.5 <small>(Glossary Added)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.8 <small>(Production)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -69,6 +69,9 @@ if check_password():
         dates = gross_nav_series.index
         gross_vals = gross_nav_series.values
         base_nav = gross_vals[0]
+        # 防止初始值为0
+        if base_nav == 0: base_nav = 1.0
+
         gross_norm = gross_vals / base_nav 
         
         nav_after_mgmt = np.zeros(len(gross_vals))
@@ -78,7 +81,11 @@ if check_password():
         
         # Mgmt Fee Loop
         for i in range(1, len(gross_vals)):
-            r_interval = gross_norm[i] / gross_norm[i-1] - 1
+            if gross_norm[i-1] == 0:
+                r_interval = 0
+            else:
+                r_interval = gross_norm[i] / gross_norm[i-1] - 1
+            
             curr_date = dates[i]
             days_delta = (curr_date - prev_date).days
             mgmt_cost = mgmt_fee_rate * (days_delta / 365.0)
@@ -98,7 +105,12 @@ if check_password():
         if nav_series.empty or len(nav_series) < 2: 
             return "数据不足", "数据不足", pd.Series(dtype='float64')
         cummax = nav_series.cummax()
-        drawdown = (nav_series - cummax) / cummax 
+        
+        # 安全除法
+        with np.errstate(divide='ignore', invalid='ignore'):
+            drawdown = (nav_series - cummax) / cummax 
+        drawdown = drawdown.fillna(0)
+
         mdd_val = drawdown.min()
         if mdd_val == 0:
             mdd_recovery = "无回撤"
@@ -119,10 +131,13 @@ if check_password():
             max_no_new_high = f"{max(intervals.max(), last_gap) if len(intervals)>0 else last_gap}天"
         return mdd_recovery, max_no_new_high, drawdown
 
+    # 核心修复版：包含双向时间锁与模糊对齐
     def calculate_metrics(nav, bench_nav=None):
+        # 1. 基础清洗
         nav = nav.dropna()
         if len(nav) < 2: return {}
         
+        # 2. 频率推断
         dates = nav.index
         days_diff = (dates[-1] - dates[0]).days
         if days_diff <= 0: return {}
@@ -135,7 +150,10 @@ if check_password():
         elif avg_interval <= 35: freq_factor = 12.0
         else: freq_factor = 252.0 / avg_interval
         
+        # 3. 绝对收益指标
         returns = nav.pct_change().dropna()
+        if returns.empty: return {}
+
         total_ret = (nav.iloc[-1] / nav.iloc[0]) - 1
         ann_ret = (1 + total_ret) ** (365.25 / days_diff) - 1
         vol = returns.std() * np.sqrt(freq_factor)
@@ -170,52 +188,90 @@ if check_password():
             "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
         
+        # 4. 相对指标 (Alpha/Beta) - 包含【模糊对齐】与【安全防御】
         if bench_nav is not None:
-            common_idx = nav.index.intersection(bench_nav.index)
-            if len(common_idx) > 10:
-                p_rets = nav.loc[common_idx].pct_change().dropna()
-                b_rets = bench_nav.loc[common_idx].pct_change().dropna()
-                valid_idx = p_rets.index.intersection(b_rets.index)
-                p_rets = p_rets.loc[valid_idx]
-                b_rets = b_rets.loc[valid_idx]
+            # 清洗基准
+            bench_clean = bench_nav.dropna()
+            
+            # 只有当基准和产品在时间轴上有交集时才计算
+            if not bench_clean.empty:
+                # 寻找时间交集（即使你手动补全了数据，这一步也是为了确定计算区间）
+                start_date = max(nav.index[0], bench_clean.index[0])
+                end_date = min(nav.index[-1], bench_clean.index[-1])
                 
-                if not p_rets.empty:
-                    cov_mat = np.cov(p_rets, b_rets)
-                    beta = cov_mat[0, 1] / cov_mat[1, 1] if cov_mat.shape == (2, 2) and cov_mat[1, 1] != 0 else 0
+                if start_date < end_date:
+                    # 1. 裁剪产品数据
+                    nav_sliced = nav.loc[start_date:end_date]
                     
-                    bench_total_ret = (bench_nav.loc[common_idx[-1]]/bench_nav.loc[common_idx[0]])**(365.25/(common_idx[-1]-common_idx[0]).days) - 1
-                    alpha = ann_ret - (rf + beta * (bench_total_ret - rf))
+                    # 2. 【关键】强制模糊对齐 (Force Fuzzy Alignment)
+                    # 即使日期错位（周五 vs 周六），也会用最近的交易日数据填充，确保不丢数据
+                    bench_aligned = bench_clean.reindex(nav_sliced.index, method='ffill')
+                    
+                    # 计算区间收益率
+                    p_rets = nav_sliced.pct_change().dropna()
+                    b_rets = bench_aligned.pct_change().dropna()
+                    
+                    # 二次对齐 (防 pct_change 产生的 NaN)
+                    valid_idx = p_rets.index.intersection(b_rets.index)
+                    
+                    if len(valid_idx) > 5:
+                        p_rets = p_rets.loc[valid_idx]
+                        b_rets = b_rets.loc[valid_idx]
+                        
+                        # 计算 Beta
+                        cov_mat = np.cov(p_rets, b_rets)
+                        if np.isnan(cov_mat).any() or np.isinf(cov_mat).any():
+                            beta = 0.0
+                        else:
+                            var_b = cov_mat[1, 1]
+                            beta = cov_mat[0, 1] / var_b if var_b != 0 else 0
+                        
+                        # 计算 Alpha (基于同期的基准表现)
+                        days_overlap = (valid_idx[-1] - valid_idx[0]).days
+                        if days_overlap > 0:
+                            b_tot = (bench_aligned.loc[valid_idx[-1]] / bench_aligned.loc[valid_idx[0]]) - 1
+                            b_ann = (1 + b_tot) ** (365.25 / days_overlap) - 1
+                            alpha = ann_ret - (rf + beta * (b_ann - rf))
+                        else:
+                            alpha = 0.0
+                            
+                        if np.isnan(alpha): alpha = 0.0
 
-                    window = int(freq_factor / 2)
-                    if window < 10: window = 10
-                    rolling_betas = []
-                    rolling_dates = []
-                    
-                    if len(p_rets) > window:
-                        for i in range(window, len(p_rets)):
-                            r_win = p_rets.iloc[i-window:i]
-                            b_win = b_rets.iloc[i-window:i]
-                            var_b = b_win.var()
-                            cov_rb = r_win.cov(b_win)
-                            rb = cov_rb / var_b if var_b != 0 else 0
-                            rolling_betas.append(rb)
-                            rolling_dates.append(p_rets.index[i])
-                        curr_beta = rolling_betas[-1] if rolling_betas else beta
-                        rb_series = pd.Series(rolling_betas, index=rolling_dates)
-                    else:
-                        curr_beta = beta
-                        rb_series = pd.Series([beta]*len(p_rets), index=p_rets.index)
-                    
-                    up_mask = b_rets > 0
-                    down_mask = b_rets < 0
-                    up_cap = (p_rets[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() and abs(b_rets[up_mask].mean()) > 1e-6 else 0
-                    down_cap = (p_rets[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() and abs(b_rets[down_mask].mean()) > 1e-6 else 0
+                        # Rolling Beta
+                        window = int(freq_factor / 2)
+                        if window < 5: window = 5
+                        rolling_betas = []
+                        rolling_dates = []
+                        
+                        if len(p_rets) > window:
+                            for i in range(window, len(p_rets)):
+                                r_win = p_rets.iloc[i-window:i]
+                                b_win = b_rets.iloc[i-window:i]
+                                if b_win.std() == 0: rb = 0
+                                else:
+                                    cov_rb = r_win.cov(b_win)
+                                    var_rb = b_win.var()
+                                    rb = cov_rb / var_rb if var_rb != 0 else 0
+                                rolling_betas.append(rb)
+                                rolling_dates.append(p_rets.index[i])
+                            curr_beta = rolling_betas[-1] if rolling_betas else beta
+                            rb_series = pd.Series(rolling_betas, index=rolling_dates)
+                        else:
+                            curr_beta = beta
+                            rb_series = pd.Series([beta]*len(p_rets), index=p_rets.index)
+                        
+                        # Capture Ratios
+                        up_mask = b_rets > 0
+                        down_mask = b_rets < 0
+                        up_cap = (p_rets[up_mask].mean() / b_rets[up_mask].mean()) if up_mask.any() and abs(b_rets[up_mask].mean()) > 1e-6 else 0
+                        down_cap = (p_rets[down_mask].mean() / b_rets[down_mask].mean()) if down_mask.any() and abs(b_rets[down_mask].mean()) > 1e-6 else 0
 
-                    metrics.update({
-                        "上行捕获": up_cap, "下行捕获": down_cap, 
-                        "Beta": beta, "Current_Beta": curr_beta, "Alpha": alpha,
-                        "Rolling_Beta_Series": rb_series
-                    })
+                        metrics.update({
+                            "上行捕获": up_cap, "下行捕获": down_cap, 
+                            "Beta": beta, "Current_Beta": curr_beta, "Alpha": alpha,
+                            "Rolling_Beta_Series": rb_series
+                        })
+                
         return metrics
 
     # [保留] 流动性计算
@@ -239,8 +295,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.5", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.5 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.8", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.8 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -282,7 +338,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v625"
+                use_container_width=True, hide_index=True, key="master_editor_v628"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -497,17 +553,25 @@ if check_password():
             compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
-                df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
-                if not df_comp.empty:
+                df_comp_viz = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
+                
+                if not df_comp_viz.empty:
                     fig_p = go.Figure()
                     for col in compare_pool:
-                        s = df_comp[col].dropna()
+                        s = df_comp_viz[col].dropna()
                         if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
                     st.plotly_chart(fig_p.update_layout(title="业绩对比 (费前)", template="plotly_white", height=500), use_container_width=True)
                     
                     res_data = []
                     for col in compare_pool:
-                        k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
+                        # 核心修复：自动对齐每个产品的生命周期，彻底消除 "NaN"
+                        prod_series = df_db[col].dropna() 
+                        if prod_series.empty: continue
+                        
+                        # 无论用户选的日期多早，计算时只取产品存在的区间
+                        bench_series_full = df_db[sel_bench] 
+                        
+                        k = calculate_metrics(prod_series, bench_series_full) 
                         if k: 
                             res_data.append({
                                 "产品名称": col, 
@@ -529,7 +593,8 @@ if check_password():
                     st.markdown("#### 📅 分年度收益率统计")
                     yearly_data = {}
                     for col in compare_pool:
-                        s = df_comp[col].dropna()
+                        s = df_db[col].dropna()
+                        if s.empty: continue
                         groups = s.groupby(s.index.year)
                         y_vals = {}
                         for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
@@ -541,7 +606,6 @@ if check_password():
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
             
-            # [Added] CIO Glossary
             st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
                 st.markdown("""
@@ -569,4 +633,3 @@ if check_password():
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
     else: st.info("👋 请上传‘产品数据库’。")
-
