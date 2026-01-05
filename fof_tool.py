@@ -42,7 +42,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.8 <small>(Production)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.10 <small>(Exact Yearly)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -295,8 +295,8 @@ if check_password():
     # ==========================================
     # 3. UI 界面与侧边栏
     # ==========================================
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.8", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.8 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.10", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.10 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -338,7 +338,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v628"
+                use_container_width=True, hide_index=True, key="master_editor_v6210"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -564,13 +564,9 @@ if check_password():
                     
                     res_data = []
                     for col in compare_pool:
-                        # 核心修复：自动对齐每个产品的生命周期，彻底消除 "NaN"
                         prod_series = df_db[col].dropna() 
                         if prod_series.empty: continue
-                        
-                        # 无论用户选的日期多早，计算时只取产品存在的区间
                         bench_series_full = df_db[sel_bench] 
-                        
                         k = calculate_metrics(prod_series, bench_series_full) 
                         if k: 
                             res_data.append({
@@ -595,13 +591,32 @@ if check_password():
                     for col in compare_pool:
                         s = df_db[col].dropna()
                         if s.empty: continue
-                        groups = s.groupby(s.index.year)
+                        
+                        # === 核心修复逻辑：使用年末重采样计算同比收益 (End-to-End) ===
+                        # 1. 提取每年最后一个有效净值
+                        yearly_closes = s.groupby(s.index.year).last()
+                        
+                        # 2. 计算同比变化 (今年底 / 去年底 - 1)
+                        # 这样能捕捉到从 Dec 31 到 Jan 02 的涨幅
+                        yearly_changes = yearly_closes.pct_change()
+                        
+                        # 3. 修正第一年 (成立年) 的收益率
+                        # pct_change() 会把第一年置为 NaN，需手动计算：第一年年底 / 成立日净值 - 1
+                        first_year = yearly_closes.index[0]
+                        first_year_ret = (yearly_closes.iloc[0] / s.iloc[0]) - 1
+                        
                         y_vals = {}
-                        for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
+                        for year, ret in yearly_changes.items():
+                            if np.isnan(ret):
+                                y_vals[year] = first_year_ret
+                            else:
+                                y_vals[year] = ret
+                        
                         yearly_data[col] = y_vals
                     
                     if yearly_data:
                         df_yearly = pd.DataFrame(yearly_data).T
+                        # 按年份排序
                         df_yearly = df_yearly[sorted(df_yearly.columns)]
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
