@@ -7,9 +7,10 @@ import io
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.2.7 - Core Logic
+# 寻星配置分析系统 v6.2.8 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
+# Update: v2.0 绝对价格计提内核 + 寻星定制文案
 # ==========================================
 
 # ------------------------------------------
@@ -49,7 +50,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.7 <small>(Beta Top View)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.8 <small>(Absolute Core)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -69,39 +70,66 @@ if check_password():
     # 2. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
-    # [Shadow Liability Model]
-    # 计算扣除管理费和潜在业绩报酬后的“影子净值”
+    # [核心升级] 绝对价格视角的净值计算引擎 v2.0
+    # 解决非1.0起始净值的计提问题，支持中途切片分析
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
+        """
+        计算扣费后的净值曲线 (支持任意入场价格)
+        :param gross_nav_series: 费前单位净值序列 (绝对值，如 1.5, 1.52...)
+        :param mgmt_fee_rate: 年化管理费率 (如 0.01)
+        :param perf_fee_rate: 业绩报酬比例 (如 0.20)
+        :return: 费后净值序列 (pd.Series)
+        """
         if gross_nav_series.empty: return gross_nav_series
         
         dates = gross_nav_series.index
         gross_vals = gross_nav_series.values
-        base_nav = gross_vals[0]
-        gross_norm = gross_vals / base_nav 
         
-        nav_after_mgmt = np.zeros(len(gross_vals))
-        nav_after_mgmt[0] = 1.0
+        # 1. 确定入场成本 (Cost Basis / HWM Start)
+        # 默认假设：回测开始当天的净值，就是客户的买入成本
+        entry_price = gross_vals[0] 
+        
+        # 初始化费后净值数组，起点与费前一致
+        net_vals = np.zeros(len(gross_vals))
+        net_vals[0] = entry_price 
+        
+        # 辅助变量：用于计算纯管理费扣除后的“影子资产净值”（不含业绩报酬逻辑）
+        asset_after_mgmt = np.zeros(len(gross_vals))
+        asset_after_mgmt[0] = entry_price
         
         prev_date = dates[0]
         
-        # Management Fee Accrual (Daily)
+        # === 步骤 A: 先剥离管理费 (对资产规模每日计提) ===
         for i in range(1, len(gross_vals)):
-            r_interval = gross_norm[i] / gross_norm[i-1] - 1
+            # 当日涨跌幅 (基于费前净值)
+            r_interval = gross_vals[i] / gross_vals[i-1] - 1
+            
             curr_date = dates[i]
             days_delta = (curr_date - prev_date).days
+            
+            # 管理费扣除逻辑：针对“当前资产净值”扣费
             mgmt_cost = mgmt_fee_rate * (days_delta / 365.0)
-            nav_after_mgmt[i] = nav_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
+            asset_after_mgmt[i] = asset_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
+            
             prev_date = curr_date
-
-        # Performance Fee (Shadow Liability Logic)
-        # Assuming HWM is 1.0 (Inception)
-        profits = nav_after_mgmt - 1.0
+            
+        # === 步骤 B: 影子负债模型 (Shadow Liability) 计算业绩报酬 ===
+        # 核心逻辑：每一天都模拟“如果客户今天赎回，我该拿走多少业绩报酬”
+        # 业绩报酬基准：必须基于“入场成本 (entry_price)”
+        
+        # 客户的名义盈利 (Nominal Profit) = 扣除管理费后的资产 - 客户本金(入场成本)
+        profits = asset_after_mgmt - entry_price
+        
+        # 计提负债：只有盈利 > 0 时才产生业绩报酬负债
         liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
         
-        shadow_net_vals = nav_after_mgmt - liabilities
-        shadow_net_vals = np.maximum(shadow_net_vals, 0) # No negative NAV
-
-        return pd.Series(shadow_net_vals * base_nav, index=dates)
+        # 最终费后净值 = 扣管后资产 - 潜在业绩报酬负债
+        net_vals = asset_after_mgmt - liabilities
+        
+        # [风控] 防止极端情况下净值为负
+        net_vals = np.maximum(net_vals, 0)
+        
+        return pd.Series(net_vals, index=dates)
 
     def get_drawdown_details(nav_series):
         if nav_series.empty or len(nav_series) < 2: 
@@ -250,8 +278,8 @@ if check_password():
     # ------------------------------------------
     # 3. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.7", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.7 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.8", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.8 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -397,6 +425,8 @@ if check_password():
                     
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
+                    
+                    # [文案定制]
                     star_nav_net.name = "寻星配置实得回报"
 
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
@@ -430,7 +460,7 @@ if check_password():
                 # Main Chart
                 fig_main = go.Figure()
                 if fee_mode_label == "收益与运作成本分析":
-                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="客户实得权益 (红线)", line=dict(color='red', width=3)))
+                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="寻星配置实得回报", line=dict(color='red', width=3)))
                     fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="策略名义表现 (灰线)", line=dict(color='gray', width=2, dash='dash')))
                     loss_amt = star_nav_gross.iloc[-1] - star_nav_net.iloc[-1]
                     loss_pct = 1 - (star_nav_net.iloc[-1] / star_nav_gross.iloc[-1])
@@ -578,4 +608,3 @@ if check_password():
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
-
