@@ -7,8 +7,14 @@ import io
 from datetime import datetime
 
 # ==========================================
-# 0. 全局配置与存储架构 (CTO层)
+# 寻星配置分析系统 v6.2.7 - Core Logic
+# Author: 寻星架构师
+# Context: Web全栈 / 量化金融 / 极度求真
 # ==========================================
+
+# ------------------------------------------
+# 0. 全局常量与预设 (Configuration)
+# ------------------------------------------
 PRESET_MASTER_DEFAULT = [
     {"产品名称": "合绎期权套利", "年管理费(%)": 0.0, "业绩报酬(%)": 30.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5},
     {"产品名称": "平方和多策略6号(市场中性+多策略）", "年管理费(%)": 0.0, "业绩报酬(%)": 18.0, "开放频率": "月度", "锁定期(月)": 0, "赎回效率(T+n)": 5},
@@ -28,16 +34,17 @@ PRESET_MASTER_DEFAULT = [
 ]
 DEFAULT_MASTER_ROW = {"年管理费(%)": 0.0, "业绩报酬(%)": 20.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5}
 
-# 初始化Session
+# Session Initialization
 if 'master_data' not in st.session_state:
     st.session_state.master_data = pd.DataFrame(PRESET_MASTER_DEFAULT)
 if 'portfolios_data' not in st.session_state:
     st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
 
-# ==========================================
-# 1. 登录验证模块
-# ==========================================
+# ------------------------------------------
+# 1. 登录与安全 (Security)
+# ------------------------------------------
 def check_password():
+    """Simple password protection for local studio use."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
@@ -53,16 +60,17 @@ def check_password():
                         st.session_state["password_correct"] = True
                         st.rerun()
                     else:
-                        st.error("密码不正确")
+                        st.error("密码错误：访问拒绝。")
         return False
     return True
 
 if check_password():
-    # ==========================================
-    # 2. 核心计算引擎
-    # ==========================================
+    # ------------------------------------------
+    # 2. 核心计算引擎 (Calculation Engine)
+    # ------------------------------------------
     
     # [Shadow Liability Model]
+    # 计算扣除管理费和潜在业绩报酬后的“影子净值”
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
         if gross_nav_series.empty: return gross_nav_series
         
@@ -76,7 +84,7 @@ if check_password():
         
         prev_date = dates[0]
         
-        # Mgmt Fee Loop
+        # Management Fee Accrual (Daily)
         for i in range(1, len(gross_vals)):
             r_interval = gross_norm[i] / gross_norm[i-1] - 1
             curr_date = dates[i]
@@ -85,12 +93,13 @@ if check_password():
             nav_after_mgmt[i] = nav_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
             prev_date = curr_date
 
-        # Perf Fee Vectorization
+        # Performance Fee (Shadow Liability Logic)
+        # Assuming HWM is 1.0 (Inception)
         profits = nav_after_mgmt - 1.0
         liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
         
         shadow_net_vals = nav_after_mgmt - liabilities
-        shadow_net_vals = np.maximum(shadow_net_vals, 0)
+        shadow_net_vals = np.maximum(shadow_net_vals, 0) # No negative NAV
 
         return pd.Series(shadow_net_vals * base_nav, index=dates)
 
@@ -130,9 +139,10 @@ if check_password():
         count = len(dates) - 1
         avg_interval = days_diff / count if count > 0 else 1
         
-        if avg_interval <= 1.5: freq_factor = 252.0
-        elif avg_interval <= 8: freq_factor = 52.0
-        elif avg_interval <= 35: freq_factor = 12.0
+        # Auto-detect frequency for annualized calcs
+        if avg_interval <= 1.5: freq_factor = 252.0 # Daily
+        elif avg_interval <= 8: freq_factor = 52.0  # Weekly
+        elif avg_interval <= 35: freq_factor = 12.0 # Monthly
         else: freq_factor = 252.0 / avg_interval
         
         returns = nav.pct_change().dropna()
@@ -142,7 +152,7 @@ if check_password():
         mdd_rec, max_nh, dd_s = get_drawdown_details(nav)
         mdd = dd_s.min()
         
-        rf = 0.019
+        rf = 0.019 # Risk-free rate (China 10Y approx / adjusted)
         sharpe = (ann_ret - rf) / vol if vol > 0 else 0
         
         downside_returns = returns[returns < 0]
@@ -170,6 +180,7 @@ if check_password():
             "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
         
+        # Benchmark comparison (Alpha/Beta)
         if bench_nav is not None:
             common_idx = nav.index.intersection(bench_nav.index)
             if len(common_idx) > 10:
@@ -186,6 +197,7 @@ if check_password():
                     bench_total_ret = (bench_nav.loc[common_idx[-1]]/bench_nav.loc[common_idx[0]])**(365.25/(common_idx[-1]-common_idx[0]).days) - 1
                     alpha = ann_ret - (rf + beta * (bench_total_ret - rf))
 
+                    # Rolling Beta (Window ~ 6 months)
                     window = int(freq_factor / 2)
                     if window < 10: window = 10
                     rolling_betas = []
@@ -218,7 +230,6 @@ if check_password():
                     })
         return metrics
 
-    # [保留] 流动性计算
     def calculate_liquidity_risk(weights, master_df):
         w_series = pd.Series(weights)
         w_norm = w_series / w_series.sum()
@@ -236,9 +247,9 @@ if check_password():
                 weighted_lockup += 6 * w 
         return weighted_lockup, worst_lockup, liquidity_notes
 
-    # ==========================================
-    # 3. UI 界面与侧边栏
-    # ==========================================
+    # ------------------------------------------
+    # 3. UI 界面与交互 (Interface)
+    # ------------------------------------------
     st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.7", page_icon="🏛️")
     st.sidebar.title("🏛️ 寻星 v6.2.7 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
@@ -347,7 +358,7 @@ if check_password():
                 st.session_state.portfolios_data = updated
                 st.rerun()
 
-        # 颜色与费率模式
+        # Color & Fee Mode
         color_map = {}
         if sel_funds:
             colors = px.colors.qualitative.Plotly 
@@ -359,7 +370,7 @@ if check_password():
             fee_mode_label = st.sidebar.radio("展示视角", ("客户实得回报 (实盘费后)", "组合策略表现 (底层净值)", "收益与运作成本分析"), index=0)
 
         # ==========================================
-        # 计算逻辑
+        # 计算逻辑执行
         # ==========================================
         df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
         star_nav = None; star_nav_gross = None; star_nav_net = None
@@ -369,12 +380,12 @@ if check_password():
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
-                # Gross
+                # Gross Calculation
                 star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
                 star_nav_gross = (1 + star_rets_gross).cumprod()
                 star_nav_gross.name = "组合策略表现 (底层净值)"
 
-                # Net
+                # Net Calculation
                 if fee_mode_label != "组合策略表现 (底层净值)":
                     net_funds_df = pd.DataFrame(index=df_port.index)
                     for f in sel_funds:
@@ -393,7 +404,7 @@ if check_password():
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
         # ==========================================
-        # Tabs 可视化
+        # 可视化 (Visualization)
         # ==========================================
         tabs = st.tabs(["🚀 组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
 
@@ -405,7 +416,7 @@ if check_password():
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
                 
-                # 指标行 (Beta Added)
+                # Metrics Row
                 c_top = st.columns(8)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -416,7 +427,7 @@ if check_password():
                 c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
                 c_top[7].metric("组合Beta", f"{m['Beta']:.2f}", help="组合全周期历史Beta (配置初心)")
                 
-                # 主图
+                # Main Chart
                 fig_main = go.Figure()
                 if fee_mode_label == "收益与运作成本分析":
                     fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="客户实得权益 (红线)", line=dict(color='red', width=3)))
@@ -427,13 +438,11 @@ if check_password():
                 else:
                     fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 
-                # 基准线
                 fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#1F2937', width=2, dash='solid'), opacity=0.6))
-                
                 fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # 风控行
+                # Risk & Drift
                 st.markdown("#### 🛡️ 风险体验与风格监控")
                 c_risk = st.columns(5) 
                 c_risk[0].metric("最大回撤修复", m['最大回撤修复时间'])
@@ -442,7 +451,6 @@ if check_password():
                 c_risk[3].metric("Current Beta", f"{m['Current_Beta']:.2f}", help="组合近半年滚动Beta (当前状态)")
                 c_risk[4].metric("VaR (95%)", f"{m['VaR(95%)']:.2%}", help="历史最差5%的日均亏损")
                 
-                # 漂移与流动性警报
                 beta_drift = abs(m['Current_Beta'] - m['Beta'])
                 if beta_drift > 0.1: st.warning(f"⚠️ **风格漂移预警**：Beta 偏差 {beta_drift:.2f} (初心 {m['Beta']:.2f} vs 现状 {m['Current_Beta']:.2f})。")
                 if lock_notes: st.warning(f"⚠️ **流动性警示**：{' '.join(lock_notes)}")
@@ -542,7 +550,7 @@ if check_password():
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
             
-            # [Added] CIO Glossary (Unicode Fix)
+            # CIO Glossary
             st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
                 st.markdown("""
@@ -569,4 +577,4 @@ if check_password():
                     * **下行**：市场跌 1% 他跌多少？（希望 < 50%）
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
-    else: st.info("👋 请上传‘产品数据库’。")
+    else: st.info("👋 请上传‘产品数据库’以启动引擎。")
