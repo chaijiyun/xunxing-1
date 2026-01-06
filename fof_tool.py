@@ -397,7 +397,7 @@ if check_password():
                     
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
-                    star_nav_net.name = "客户实得回报 (费后)"
+                    star_nav_net.name = "寻星配置实得回报"
 
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
@@ -578,3 +578,4 @@ if check_password():
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
+
