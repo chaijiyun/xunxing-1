@@ -8,9 +8,10 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.0.1 - Monte Carlo Fix
+# 寻星配置分析系统 v7.0.2 - Core Logic
 # Author: 寻星架构师
-# Update: 修复蒙特卡洛模拟的频率识别 Bug (解决收益率虚高问题)
+# Context: Web全栈 / 量化金融 / 极度求真
+# Update: 修复 TAB3 年度收益计算逻辑 (解决跨年缝隙问题)
 # ==========================================
 
 # ------------------------------------------
@@ -72,7 +73,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.1 <small>(Fixed MC)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.2 <small>(Stable)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -244,52 +245,38 @@ if check_password():
     # [Improved] 智能频率感知的蒙特卡洛引擎
     def run_monte_carlo(historical_returns, n_simulations=1000, n_years=3, initial_capital=1000000):
         if historical_returns.empty or len(historical_returns) < 10: return None, 0, 0, ""
-        
-        # 1. 自动探测数据频率 (Auto-detect Frequency)
-        # 计算平均日期间隔天数
         try:
             dates = historical_returns.index
             days_interval = (dates[-1] - dates[0]).days / len(dates)
         except:
             days_interval = 1
-            
-        # 判定频率因子: 间隔>4天认定为周频(52)，否则为日频(252)
         if days_interval > 4:
             freq = 52.0
             dt_label = "周"
         else:
             freq = 252.0
             dt_label = "天"
-            
-        # 2. 参数估计 (基于正确频率)
         mu = historical_returns.mean() * freq 
         sigma = historical_returns.std() * np.sqrt(freq)
         dt = 1 / freq
         n_steps = int(n_years * freq)
-        
-        # 3. 路径生成
         S = np.zeros((n_steps + 1, n_simulations))
         S[0] = initial_capital
         Z = np.random.normal(0, 1, (n_steps, n_simulations))
-        
         drift = (mu - 0.5 * sigma**2) * dt
         diffusion = sigma * np.sqrt(dt) * Z
         daily_returns = np.exp(drift + diffusion)
         path_matrix = initial_capital * np.cumprod(np.vstack([np.ones((1, n_simulations)), daily_returns]), axis=0)
-        
-        # 4. 生成未来时间轴
         last_date = historical_returns.index[-1]
-        # 按照探测到的间隔步长生成日期
         step_days = 7 if freq == 52 else 1
         future_dates = [last_date + timedelta(days=x*step_days) for x in range(n_steps + 1)]
-        
         return pd.DataFrame(path_matrix, index=future_dates), mu, sigma, dt_label
 
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.0.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.2", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.0.2 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -330,7 +317,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v701"
+                use_container_width=True, hide_index=True, key="master_editor_v702"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -558,18 +545,54 @@ if check_password():
                             if k: 
                                 res_data.append({"产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), "盈亏比": f"{k['盈亏比']:.2f}", "胜率": f"{k['正收益概率(日)']:.1%}", "VaR(95%)": f"{k['VaR(95%)']:.2%}", "上行捕获": f"{k['上行捕获']:.2f}", "下行捕获": f"{k['下行捕获']:.2f}", "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"})
                     if res_data: st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
+                    
+                    # -------------------------------------------------------
+                    # [Fix] 修复年度收益计算逻辑 v7.0.2
+                    # 旧逻辑会丢失跨年周的收益，新逻辑基于 "End/Prev_End"
+                    # -------------------------------------------------------
+                    st.markdown("#### 📅 分年度收益率统计")
                     yearly_data = {}
                     for col in compare_pool:
                         if col in df_comp.columns:
                             s = df_comp[col].dropna()
-                            groups = s.groupby(s.index.year)
+                            if s.empty: continue
+                            
+                            # 1. 取每年的最后一个净值
+                            try:
+                                yearly_nav = s.resample('YE').last() # Pandas 2.x
+                            except:
+                                yearly_nav = s.resample('A').last()  # Pandas 1.x Fallback
+                                
+                            if yearly_nav.empty: continue
+
+                            # 2. 计算基于上年末的涨跌幅
+                            yearly_rets = yearly_nav.pct_change()
+
+                            # 3. 修正第一年 (成立年) 的收益
+                            # 第一年的收益 = 第一年年末 / 成立日净值 - 1
+                            try:
+                                first_year = yearly_nav.index[0].year
+                                first_val = s.iloc[0]
+                                end_val_first_year = yearly_nav.iloc[0]
+                                first_year_ret = (end_val_first_year / first_val) - 1
+                                yearly_rets.iloc[0] = first_year_ret
+                            except: pass
+
+                            # 4. 格式化输出
                             y_vals = {}
-                            for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
+                            for date, ret in yearly_rets.items():
+                                if not pd.isna(ret):
+                                    y_vals[date.year] = ret
+                            
                             yearly_data[col] = y_vals
+                    
                     if yearly_data:
                         df_yearly = pd.DataFrame(yearly_data).T
+                        # 按年份排序
                         df_yearly = df_yearly[sorted(df_yearly.columns)]
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
+                    # -------------------------------------------------------
+
                 else: st.warning("⚠️ 数据不足")
             st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
