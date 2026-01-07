@@ -7,10 +7,10 @@ import io
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.2.8 - Core Logic
+# 寻星配置分析系统 v6.2.9 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: v2.0 绝对价格计提内核 + 寻星定制文案
+# Update: 修复组合计算首尾数据截断问题 (Data Boundary Fix)
 # ==========================================
 
 # ------------------------------------------
@@ -50,7 +50,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.8 <small>(Absolute Core)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.9 <small>(Robust Core)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -278,8 +278,8 @@ if check_password():
     # ------------------------------------------
     # 3. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.8", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.8 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.9", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.2.9 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -404,7 +404,9 @@ if check_password():
         star_nav = None; star_nav_gross = None; star_nav_net = None
 
         if sel_funds and not df_db.empty:
-            df_port = df_db[sel_funds].dropna()
+            # 🚑 [关键修复] 防止不同产品日期未对齐时 dropna 误删首尾有效数据
+            df_port = df_db[sel_funds].ffill().dropna(how='all')
+            
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
