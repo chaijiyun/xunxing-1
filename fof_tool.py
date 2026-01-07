@@ -8,10 +8,9 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.0 Preview - Monte Carlo
+# 寻星配置分析系统 v7.0.1 - Monte Carlo Fix
 # Author: 寻星架构师
-# Context: Web全栈 / 量化金融 / 极度求真
-# Update: 新增蒙特卡洛模拟引擎 (Future Forecasting)
+# Update: 修复蒙特卡洛模拟的频率识别 Bug (支持周频/日频自动切换)
 # ==========================================
 
 # ------------------------------------------
@@ -19,7 +18,7 @@ from datetime import datetime, timedelta
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"
 
-# [Factory Reset] 出厂预设值
+# [Factory Reset] 出厂预设值 (基于最新提供的费率表)
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -73,7 +72,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0 <small>(Monte Carlo)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.1 <small>(Fixed MC)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -93,7 +92,6 @@ if check_password():
     # 3. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
-    # [Kernel v2.0] 绝对价格计提
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
         if gross_nav_series.empty: return gross_nav_series
         dates = gross_nav_series.index
@@ -243,50 +241,55 @@ if check_password():
                 weighted_lockup += 6 * w 
         return weighted_lockup, worst_lockup, liquidity_notes
 
-    # [New] 蒙特卡洛模拟引擎
+    # [Improved] 智能频率感知的蒙特卡洛引擎
     def run_monte_carlo(historical_returns, n_simulations=1000, n_years=3, initial_capital=1000000):
-        """
-        基于几何布朗运动 (GBM) 的蒙特卡洛模拟
-        :param historical_returns: 组合的历史收益率序列 (Series)
-        :param n_simulations: 模拟路径数量
-        :param n_years: 预测年限
-        :param initial_capital: 初始资金
-        """
-        if historical_returns.empty: return None
+        if historical_returns.empty or len(historical_returns) < 10: return None, 0, 0
         
-        # 参数估计
-        mu = historical_returns.mean() * 252 # 年化收益 (对数收益率假设)
-        sigma = historical_returns.std() * np.sqrt(252) # 年化波动率
-        dt = 1/252 # 时间步长 (日)
-        n_steps = int(n_years * 252)
+        # 1. 自动探测数据频率 (Auto-detect Frequency)
+        # 计算平均日期间隔天数
+        try:
+            dates = historical_returns.index
+            days_interval = (dates[-1] - dates[0]).days / len(dates)
+        except:
+            days_interval = 1
+            
+        # 判定频率因子: 间隔>4天认定为周频(52)，否则为日频(252)
+        if days_interval > 4:
+            freq = 52.0
+            dt_label = "周"
+        else:
+            freq = 252.0
+            dt_label = "天"
+            
+        # 2. 参数估计 (基于正确频率)
+        mu = historical_returns.mean() * freq 
+        sigma = historical_returns.std() * np.sqrt(freq)
+        dt = 1 / freq
+        n_steps = int(n_years * freq)
         
-        # 矩阵生成: (Step, Path)
-        # S_t = S_{t-1} * exp((mu - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z)
+        # 3. 路径生成
         S = np.zeros((n_steps + 1, n_simulations))
         S[0] = initial_capital
-        
-        # 生成随机震动项 Z (标准正态分布)
         Z = np.random.normal(0, 1, (n_steps, n_simulations))
         
-        # 向量化计算路径
         drift = (mu - 0.5 * sigma**2) * dt
         diffusion = sigma * np.sqrt(dt) * Z
-        
-        # 累乘计算
         daily_returns = np.exp(drift + diffusion)
         path_matrix = initial_capital * np.cumprod(np.vstack([np.ones((1, n_simulations)), daily_returns]), axis=0)
         
-        # 生成时间轴
+        # 4. 生成未来时间轴
         last_date = historical_returns.index[-1]
-        future_dates = [last_date + timedelta(days=x) for x in range(n_steps + 1)] # 简化处理，包含周末
+        # 按照探测到的间隔步长生成日期
+        step_days = 7 if freq == 52 else 1
+        future_dates = [last_date + timedelta(days=x*step_days) for x in range(n_steps + 1)]
         
-        return pd.DataFrame(path_matrix, index=future_dates), mu, sigma
+        return pd.DataFrame(path_matrix, index=future_dates), mu, sigma, dt_label
 
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.0.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -327,7 +330,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v70"
+                use_container_width=True, hide_index=True, key="master_editor_v701"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -402,7 +405,7 @@ if check_password():
         # ==========================================
         df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
         star_nav = None; star_nav_gross = None; star_nav_net = None
-        star_rets_for_mc = None # For Monte Carlo
+        star_rets_for_mc = None 
 
         if sel_funds and not df_db.empty:
             df_port = df_db[sel_funds].ffill().dropna(how='all')
@@ -427,9 +430,9 @@ if check_password():
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
                     star_nav_net.name = "寻星配置实得回报"
-                    star_rets_for_mc = star_rets_net # Use Net for MC if Net is selected
+                    star_rets_for_mc = star_rets_net 
                 else:
-                    star_rets_for_mc = star_rets_gross # Use Gross for MC
+                    star_rets_for_mc = star_rets_gross 
 
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
@@ -587,12 +590,10 @@ if check_password():
 
                 if st.button("🚀 开始推演"):
                     with st.spinner("正在生成平行宇宙..."):
-                        mc_df, mu_est, sigma_est = run_monte_carlo(star_rets_for_mc, sim_count, sim_years, init_amt)
+                        mc_df, mu_est, sigma_est, dt_label = run_monte_carlo(star_rets_for_mc, sim_count, sim_years, init_amt)
                         
                         if mc_df is not None:
-                            # 1. 路径图
                             fig_mc = go.Figure()
-                            # 绘制分位线
                             p10 = mc_df.quantile(0.1, axis=1)
                             p50 = mc_df.quantile(0.5, axis=1)
                             p90 = mc_df.quantile(0.9, axis=1)
@@ -609,12 +610,11 @@ if check_password():
                             fig_mc.update_layout(title=f"未来 {sim_years} 年财富路径推演 (基于 {fee_mode_label})", yaxis_title="账户权益", template="plotly_white")
                             st.plotly_chart(fig_mc, use_container_width=True)
                             
-                            # 2. 统计结果
                             final_values = mc_df.iloc[-1]
                             loss_prob = (final_values < init_amt).mean()
                             exp_ret_annual = (p50.iloc[-1] / init_amt) ** (1/sim_years) - 1
                             
-                            st.success(f"✅ 模拟完成！基于组合历史年化波动率 **{sigma_est:.2%}** 进行推演。")
+                            st.success(f"✅ 模拟完成！检测到数据为 **{dt_label}频**，已自动校准年化参数 (Vol: {sigma_est:.2%})。")
                             
                             c_m1, c_m2, c_m3 = st.columns(3)
                             c_m1.metric("😭 破产概率 (亏损概率)", f"{loss_prob:.1%}", help="期末本金低于初始本金的概率")
