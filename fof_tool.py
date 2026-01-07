@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # 寻星配置分析系统 v7.0.1 - Monte Carlo Fix
 # Author: 寻星架构师
-# Update: 修复蒙特卡洛模拟的频率识别 Bug (支持周频/日频自动切换)
+# Update: 修复蒙特卡洛模拟的频率识别 Bug (解决收益率虚高问题)
 # ==========================================
 
 # ------------------------------------------
@@ -243,7 +243,7 @@ if check_password():
 
     # [Improved] 智能频率感知的蒙特卡洛引擎
     def run_monte_carlo(historical_returns, n_simulations=1000, n_years=3, initial_capital=1000000):
-        if historical_returns.empty or len(historical_returns) < 10: return None, 0, 0
+        if historical_returns.empty or len(historical_returns) < 10: return None, 0, 0, ""
         
         # 1. 自动探测数据频率 (Auto-detect Frequency)
         # 计算平均日期间隔天数
