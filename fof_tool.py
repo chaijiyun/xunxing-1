@@ -7,10 +7,10 @@ import io
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.2.9 - Core Logic
+# 寻星配置分析系统 v6.3.0 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 修复组合计算首尾数据截断问题 (Data Boundary Fix)
+# Update: Tab 3 新增“费后实得”对比模式 (Net Return Comparison)
 # ==========================================
 
 # ------------------------------------------
@@ -50,7 +50,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.2.9 <small>(Robust Core)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.0 <small>(Net Compare)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -71,14 +71,9 @@ if check_password():
     # ------------------------------------------
     
     # [核心升级] 绝对价格视角的净值计算引擎 v2.0
-    # 解决非1.0起始净值的计提问题，支持中途切片分析
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
         """
         计算扣费后的净值曲线 (支持任意入场价格)
-        :param gross_nav_series: 费前单位净值序列 (绝对值，如 1.5, 1.52...)
-        :param mgmt_fee_rate: 年化管理费率 (如 0.01)
-        :param perf_fee_rate: 业绩报酬比例 (如 0.20)
-        :return: 费后净值序列 (pd.Series)
         """
         if gross_nav_series.empty: return gross_nav_series
         
@@ -86,47 +81,32 @@ if check_password():
         gross_vals = gross_nav_series.values
         
         # 1. 确定入场成本 (Cost Basis / HWM Start)
-        # 默认假设：回测开始当天的净值，就是客户的买入成本
         entry_price = gross_vals[0] 
         
-        # 初始化费后净值数组，起点与费前一致
+        # 初始化费后净值数组
         net_vals = np.zeros(len(gross_vals))
         net_vals[0] = entry_price 
         
-        # 辅助变量：用于计算纯管理费扣除后的“影子资产净值”（不含业绩报酬逻辑）
+        # 辅助变量：扣管后资产
         asset_after_mgmt = np.zeros(len(gross_vals))
         asset_after_mgmt[0] = entry_price
         
         prev_date = dates[0]
         
-        # === 步骤 A: 先剥离管理费 (对资产规模每日计提) ===
+        # === 步骤 A: 先剥离管理费 ===
         for i in range(1, len(gross_vals)):
-            # 当日涨跌幅 (基于费前净值)
             r_interval = gross_vals[i] / gross_vals[i-1] - 1
-            
             curr_date = dates[i]
             days_delta = (curr_date - prev_date).days
             
-            # 管理费扣除逻辑：针对“当前资产净值”扣费
             mgmt_cost = mgmt_fee_rate * (days_delta / 365.0)
             asset_after_mgmt[i] = asset_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
-            
             prev_date = curr_date
             
-        # === 步骤 B: 影子负债模型 (Shadow Liability) 计算业绩报酬 ===
-        # 核心逻辑：每一天都模拟“如果客户今天赎回，我该拿走多少业绩报酬”
-        # 业绩报酬基准：必须基于“入场成本 (entry_price)”
-        
-        # 客户的名义盈利 (Nominal Profit) = 扣除管理费后的资产 - 客户本金(入场成本)
+        # === 步骤 B: 影子负债模型 ===
         profits = asset_after_mgmt - entry_price
-        
-        # 计提负债：只有盈利 > 0 时才产生业绩报酬负债
         liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
-        
-        # 最终费后净值 = 扣管后资产 - 潜在业绩报酬负债
         net_vals = asset_after_mgmt - liabilities
-        
-        # [风控] 防止极端情况下净值为负
         net_vals = np.maximum(net_vals, 0)
         
         return pd.Series(net_vals, index=dates)
@@ -167,10 +147,9 @@ if check_password():
         count = len(dates) - 1
         avg_interval = days_diff / count if count > 0 else 1
         
-        # Auto-detect frequency for annualized calcs
-        if avg_interval <= 1.5: freq_factor = 252.0 # Daily
-        elif avg_interval <= 8: freq_factor = 52.0  # Weekly
-        elif avg_interval <= 35: freq_factor = 12.0 # Monthly
+        if avg_interval <= 1.5: freq_factor = 252.0
+        elif avg_interval <= 8: freq_factor = 52.0 
+        elif avg_interval <= 35: freq_factor = 12.0
         else: freq_factor = 252.0 / avg_interval
         
         returns = nav.pct_change().dropna()
@@ -180,7 +159,7 @@ if check_password():
         mdd_rec, max_nh, dd_s = get_drawdown_details(nav)
         mdd = dd_s.min()
         
-        rf = 0.019 # Risk-free rate (China 10Y approx / adjusted)
+        rf = 0.019 
         sharpe = (ann_ret - rf) / vol if vol > 0 else 0
         
         downside_returns = returns[returns < 0]
@@ -208,7 +187,6 @@ if check_password():
             "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
         
-        # Benchmark comparison (Alpha/Beta)
         if bench_nav is not None:
             common_idx = nav.index.intersection(bench_nav.index)
             if len(common_idx) > 10:
@@ -225,7 +203,6 @@ if check_password():
                     bench_total_ret = (bench_nav.loc[common_idx[-1]]/bench_nav.loc[common_idx[0]])**(365.25/(common_idx[-1]-common_idx[0]).days) - 1
                     alpha = ann_ret - (rf + beta * (bench_total_ret - rf))
 
-                    # Rolling Beta (Window ~ 6 months)
                     window = int(freq_factor / 2)
                     if window < 10: window = 10
                     rolling_betas = []
@@ -278,8 +255,8 @@ if check_password():
     # ------------------------------------------
     # 3. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.2.9", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.2.9 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -321,7 +298,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v627"
+                use_container_width=True, hide_index=True, key="master_editor_v630"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -404,18 +381,17 @@ if check_password():
         star_nav = None; star_nav_gross = None; star_nav_net = None
 
         if sel_funds and not df_db.empty:
-            # 🚑 [关键修复] 防止不同产品日期未对齐时 dropna 误删首尾有效数据
             df_port = df_db[sel_funds].ffill().dropna(how='all')
             
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 
-                # Gross Calculation
+                # Gross
                 star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
                 star_nav_gross = (1 + star_rets_gross).cumprod()
                 star_nav_gross.name = "组合策略表现 (底层净值)"
 
-                # Net Calculation
+                # Net
                 if fee_mode_label != "组合策略表现 (底层净值)":
                     net_funds_df = pd.DataFrame(index=df_port.index)
                     for f in sel_funds:
@@ -427,8 +403,6 @@ if check_password():
                     
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
-                    
-                    # [文案定制]
                     star_nav_net.name = "寻星配置实得回报"
 
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
@@ -448,7 +422,6 @@ if check_password():
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
                 
-                # Metrics Row
                 c_top = st.columns(8)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -459,7 +432,6 @@ if check_password():
                 c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
                 c_top[7].metric("组合Beta", f"{m['Beta']:.2f}", help="组合全周期历史Beta (配置初心)")
                 
-                # Main Chart
                 fig_main = go.Figure()
                 if fee_mode_label == "收益与运作成本分析":
                     fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="寻星配置实得回报", line=dict(color='red', width=3)))
@@ -474,7 +446,6 @@ if check_password():
                 fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
-                # Risk & Drift
                 st.markdown("#### 🛡️ 风险体验与风格监控")
                 c_risk = st.columns(5) 
                 c_risk[0].metric("最大回撤修复", m['最大回撤修复时间'])
@@ -532,49 +503,70 @@ if check_password():
                 st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
 
         with tabs[2]:
-            st.subheader("⚔️ 配置池产品分析 (费前)")
+            c_t1, c_t2 = st.columns([3, 1])
+            with c_t1: st.subheader("⚔️ 配置池产品分析")
+            with c_t2: 
+                comp_fee_mode = st.selectbox("展示视角", ["费前 (Gross)", "费后 (Net)"], index=0)
+
             pool_options = [c for c in all_cols if c != sel_bench]
             pool_options.sort()
             compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
+            
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
-                df_comp = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
+                df_comp_raw = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
+                
+                if comp_fee_mode == "费后 (Net)":
+                    df_comp = pd.DataFrame(index=df_comp_raw.index)
+                    for p in compare_pool:
+                        s_raw = df_comp_raw[p].dropna()
+                        if s_raw.empty: continue
+                        info = MASTER_DICT.get(p, DEFAULT_MASTER_ROW)
+                        m_rate = info.get('年管理费(%)', 0) / 100.0
+                        p_rate = info.get('业绩报酬(%)', 0) / 100.0
+                        df_comp[p] = calculate_net_nav_series(s_raw, m_rate, p_rate)
+                else:
+                    df_comp = df_comp_raw
+
                 if not df_comp.empty:
                     fig_p = go.Figure()
                     for col in compare_pool:
-                        s = df_comp[col].dropna()
-                        if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
-                    st.plotly_chart(fig_p.update_layout(title="业绩对比 (费前)", template="plotly_white", height=500), use_container_width=True)
+                        if col in df_comp.columns:
+                            s = df_comp[col].dropna()
+                            if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
+                    st.plotly_chart(fig_p.update_layout(title=f"业绩对比 ({comp_fee_mode})", template="plotly_white", height=500), use_container_width=True)
                     
                     res_data = []
                     for col in compare_pool:
-                        k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
-                        if k: 
-                            res_data.append({
-                                "产品名称": col, 
-                                "总收益": f"{k['总收益率']:.2%}",
-                                "年化收益": f"{k['年化收益']:.2%}", 
-                                "最大回撤": f"{k['最大回撤']:.2%}",
-                                "夏普": round(k['夏普比率'], 2),
-                                "盈亏比": f"{k['盈亏比']:.2f}",
-                                "胜率": f"{k['正收益概率(日)']:.1%}",
-                                "VaR(95%)": f"{k['VaR(95%)']:.2%}",
-                                "上行捕获": f"{k['上行捕获']:.2f}",
-                                "下行捕获": f"{k['下行捕获']:.2f}",
-                                "Alpha": f"{k['Alpha']:.2%}",
-                                "Beta": f"{k['Beta']:.2f}"
-                            })
+                        if col in df_comp.columns:
+                            k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
+                            if k: 
+                                res_data.append({
+                                    "产品名称": col, 
+                                    "总收益": f"{k['总收益率']:.2%}",
+                                    "年化收益": f"{k['年化收益']:.2%}", 
+                                    "最大回撤": f"{k['最大回撤']:.2%}",
+                                    "夏普": round(k['夏普比率'], 2),
+                                    "盈亏比": f"{k['盈亏比']:.2f}",
+                                    "胜率": f"{k['正收益概率(日)']:.1%}",
+                                    "VaR(95%)": f"{k['VaR(95%)']:.2%}",
+                                    "上行捕获": f"{k['上行捕获']:.2f}",
+                                    "下行捕获": f"{k['下行捕获']:.2f}",
+                                    "Alpha": f"{k['Alpha']:.2%}",
+                                    "Beta": f"{k['Beta']:.2f}"
+                                })
                     if res_data: 
                         st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
                     
                     st.markdown("#### 📅 分年度收益率统计")
                     yearly_data = {}
                     for col in compare_pool:
-                        s = df_comp[col].dropna()
-                        groups = s.groupby(s.index.year)
-                        y_vals = {}
-                        for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
-                        yearly_data[col] = y_vals
+                        if col in df_comp.columns:
+                            s = df_comp[col].dropna()
+                            groups = s.groupby(s.index.year)
+                            y_vals = {}
+                            for year, group in groups: y_vals[year] = (group.iloc[-1] / group.iloc[0]) - 1
+                            yearly_data[col] = y_vals
                     
                     if yearly_data:
                         df_yearly = pd.DataFrame(yearly_data).T
