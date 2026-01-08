@@ -8,10 +8,10 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.1.0 - Core Logic
+# 寻星配置分析系统 v7.1.1 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 新增动态调仓功能 (Dynamic Rebalancing)
+# Update: 新增数据健康监控与公平对比提示
 # ==========================================
 
 # ------------------------------------------
@@ -64,9 +64,7 @@ if 'master_data' not in st.session_state:
     st.session_state.master_data = load_local_config()
 if 'portfolios_data' not in st.session_state:
     st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
-# [New] 动态调仓存储结构
 if 'rebalancing_data' not in st.session_state:
-    # 结构: DataFrame ['组合名称', '开始日期', '结束日期', '产品名称', '权重']
     st.session_state.rebalancing_data = pd.DataFrame(columns=['组合名称', '开始日期', '结束日期', '产品名称', '权重'])
 
 # ------------------------------------------
@@ -77,7 +75,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.0 <small>(Pro)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.1 <small>(Insight)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -276,8 +274,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.1.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -318,7 +316,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v710"
+                use_container_width=True, hide_index=True, key="master_editor_v711"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -336,19 +334,17 @@ if check_password():
 
         st.sidebar.markdown("---")
         
-        # === 组合管理 (升级版) ===
+        # === 组合管理 (动态调仓版) ===
         st.sidebar.markdown("### 💼 组合配置")
         saved_names = st.session_state.portfolios_data['组合名称'].unique().tolist() if not st.session_state.portfolios_data.empty else []
         mode_options = ["🛠️ 自定义/新建"] + saved_names
         selected_mode = st.sidebar.selectbox("选择模式:", mode_options)
         
-        # [New] 动态调仓开关
         enable_rebalancing = st.sidebar.checkbox("启用动态调仓模式 (Rebalancing)", value=False)
         
         sel_funds = []
         weights = {}
-        # 复杂模式变量
-        rebal_schedule = [] # List of (Start_Date, End_Date, {Fund: Weight})
+        rebal_schedule = [] 
         
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
@@ -358,7 +354,6 @@ if check_password():
             available_funds.sort()
             
             if not enable_rebalancing:
-                # --- 简单静态模式 ---
                 sel_funds = st.sidebar.multiselect("挑选成分基金", available_funds)
                 if sel_funds:
                     st.sidebar.markdown("#### ⚖️ 权重")
@@ -377,18 +372,13 @@ if check_password():
                                 st.toast(f"组合 {new_p_name} 已保存", icon="✅")
                                 st.rerun()
             else:
-                # --- [New] 动态调仓模式 ---
                 st.sidebar.info("📅 动态调仓：请按时间段配置持仓。系统将自动链接净值。")
                 rebal_periods = st.sidebar.number_input("调仓次数 (时间段数)", 1, 10, 2)
-                
-                valid_rebal_config = True
-                
                 for i in range(rebal_periods):
                     st.sidebar.markdown(f"**🗓️ 第 {i+1} 阶段配置**")
                     col_d1, col_d2 = st.sidebar.columns(2)
                     d_start = col_d1.date_input(f"开始日期 (P{i+1})", value=df_raw.index.min().date(), key=f"d_s_{i}")
                     d_end = col_d2.date_input(f"结束日期 (P{i+1})", value=df_raw.index.max().date(), key=f"d_e_{i}")
-                    
                     p_funds = st.sidebar.multiselect(f"成分基金 (P{i+1})", available_funds, key=f"fs_{i}")
                     p_weights = {}
                     if p_funds:
@@ -396,21 +386,15 @@ if check_password():
                         for f in p_funds: 
                             p_weights[f] = st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, avg_w_p, step=0.1, key=f"w_{i}_{f}")
                         rebal_schedule.append((d_start, d_end, p_weights))
-                        # 收集所有涉及的基金用于后续计算
                         for f in p_funds: 
                             if f not in sel_funds: sel_funds.append(f)
-                    else:
-                        valid_rebal_config = False
         else:
-            # --- 加载已有组合 ---
             subset = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] == selected_mode]
             valid_subset = subset[subset['产品名称'].isin(all_cols)]
             if not valid_subset.empty:
                 sel_funds = valid_subset['产品名称'].tolist()
                 weights = {row['产品名称']: row['权重'] for _, row in valid_subset.iterrows()}
                 st.sidebar.table(valid_subset[['产品名称', '权重']].set_index('产品名称').style.format("{:.1%}"))
-                
-                # 目前暂不支持加载动态组合（需要复杂的数据结构支持，此处简化为只加载静态）
                 if enable_rebalancing:
                     st.sidebar.warning("⚠️ 当前暂不支持从存档加载动态调仓配置，请使用'自定义/新建'模式进行动态分析。")
             
@@ -418,6 +402,35 @@ if check_password():
                 updated = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] != selected_mode]
                 st.session_state.portfolios_data = updated
                 st.rerun()
+
+        # === [New] 数据源健康监控 ===
+        st.sidebar.markdown("---")
+        with st.sidebar.expander("📊 数据源健康监控", expanded=False):
+            latest_db_date = df_raw.index.max()
+            st.caption(f"数据库最新日期: {latest_db_date.date()}")
+            
+            health_issues = []
+            for col in all_cols:
+                if col in ['沪深300', '日期'] or col == sel_bench: continue
+                s = df_raw[col].dropna()
+                if s.empty: continue
+                
+                last_date = s.index[-1]
+                days_lag = (latest_db_date - last_date).days
+                
+                freq_label = "日频"
+                if len(s) > 3:
+                    avg_diff = (s.index[-1] - s.index[0]).days / len(s)
+                    if avg_diff > 4: freq_label = "周频"
+                
+                if days_lag > 14: 
+                    health_issues.append(f"⚠️ **{col}** ({freq_label})\n   停更于 {last_date.date()} (落后 {days_lag} 天)")
+            
+            if health_issues:
+                st.markdown("#### ⚠️ 停更预警")
+                for issue in health_issues: st.markdown(issue)
+            else:
+                st.success("✅ 所有产品数据更新正常")
 
         # Color & Fee Mode
         color_map = {}
@@ -431,30 +444,22 @@ if check_password():
             fee_mode_label = st.sidebar.radio("展示视角", ("客户实得回报 (实盘费后)", "组合策略表现 (底层净值)", "收益与运作成本分析"), index=0)
 
         # ==========================================
-        # 计算逻辑执行 (核心升级)
+        # 计算逻辑执行
         # ==========================================
         df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
         star_nav = None; star_nav_gross = None; star_nav_net = None
         star_rets_for_mc = None 
 
         if sel_funds and not df_db.empty:
-            # 1. 准备基础数据 (所有涉及到的基金)
             df_port_raw = df_db[sel_funds].ffill().dropna(how='all')
             
             if not df_port_raw.empty:
-                
-                # ---------------------------------------------------
-                # 分支 A: 静态组合计算 (Legacy)
-                # ---------------------------------------------------
                 if not enable_rebalancing:
                     norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
-                    
-                    # Gross
                     star_rets_gross = (df_port_raw.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_gross = (1 + star_rets_gross).cumprod()
                     star_nav_gross.name = "组合策略表现 (底层净值)"
 
-                    # Net
                     if fee_mode_label != "组合策略表现 (底层净值)":
                         net_funds_df = pd.DataFrame(index=df_port_raw.index)
                         for f in sel_funds:
@@ -470,49 +475,33 @@ if check_password():
                         star_rets_for_mc = star_rets_net 
                     else:
                         star_rets_for_mc = star_rets_gross
-                
-                # ---------------------------------------------------
-                # 分支 B: 动态调仓计算 (New Engine)
-                # ---------------------------------------------------
                 else:
-                    # 初始化全时间段的收益序列
                     full_rets_gross = pd.Series(0.0, index=df_port_raw.index)
                     full_rets_net = pd.Series(0.0, index=df_port_raw.index)
                     
                     for (d_s, d_e, p_w) in rebal_schedule:
-                        # 截取该时间段的数据
-                        # 转换日期为 Timestamp 以进行比较
                         ts_start = pd.Timestamp(d_s)
                         ts_end = pd.Timestamp(d_e)
-                        
                         mask = (df_port_raw.index >= ts_start) & (df_port_raw.index <= ts_end)
                         if not mask.any(): continue
                         
                         sub_df = df_port_raw.loc[mask]
-                        # 归一化权重
                         sub_w = pd.Series(p_w)
                         if sub_w.sum() == 0: continue
                         sub_w = sub_w / sub_w.sum()
                         
-                        # 计算该片段 Gross Return
-                        # 注意：片段内的收益计算
                         sub_rets = sub_df.pct_change().fillna(0)
-                        # 只取选中的基金
                         valid_funds = [f for f in sub_w.index if f in sub_df.columns]
                         if not valid_funds: continue
                         
                         seg_ret_gross = (sub_rets[valid_funds] * sub_w[valid_funds]).sum(axis=1)
                         full_rets_gross.loc[mask] = seg_ret_gross
                         
-                        # 计算该片段 Net Return
                         if fee_mode_label != "组合策略表现 (底层净值)":
                             sub_net_df = pd.DataFrame(index=sub_df.index)
                             for f in valid_funds:
-                                g_s = sub_df[f] # Gross Series Slice
+                                g_s = sub_df[f]
                                 info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
-                                # 绝对价格计提：每个片段都把起点的成本视为基准，这是一个简化但合理的处理
-                                # 更精确的做法应该追踪全周期的 High Water Mark，但对于“换基”操作，
-                                # 新买入的基金确实是重新计算成本线的。
                                 m_rate = info.get('年管理费(%)', 0) / 100.0
                                 p_rate = info.get('业绩报酬(%)', 0) / 100.0
                                 sub_net_df[f] = calculate_net_nav_series(g_s, m_rate, p_rate)
@@ -520,10 +509,8 @@ if check_password():
                             seg_ret_net = (sub_net_df.pct_change().fillna(0) * sub_w[valid_funds]).sum(axis=1)
                             full_rets_net.loc[mask] = seg_ret_net
                             
-                    # 拼接完成，计算累计净值
                     star_nav_gross = (1 + full_rets_gross).cumprod()
                     star_nav_gross.name = "组合策略表现 (动态调仓)"
-                    
                     star_nav_net = (1 + full_rets_net).cumprod()
                     star_nav_net.name = "寻星配置实得回报 (动态调仓)"
                     
@@ -532,7 +519,6 @@ if check_password():
                     else:
                         star_rets_for_mc = full_rets_gross
 
-                # 最终输出赋值
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
@@ -544,16 +530,13 @@ if check_password():
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
-            # 动态模式下，流动性风险取最后一个片段的配置
             current_weights = weights if not enable_rebalancing else (rebal_schedule[-1][2] if rebal_schedule else {})
             avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(current_weights, st.session_state.master_data)
 
         with tabs[0]:
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
-                if enable_rebalancing:
-                    st.info("💡 **当前为动态调仓模式**：曲线由多个时间段的配置拼接而成。")
-                
+                if enable_rebalancing: st.info("💡 **当前为动态调仓模式**：曲线由多个时间段的配置拼接而成。")
                 c_top = st.columns(8)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -592,15 +575,11 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                # 动态模式下，归因展示的是“当前最新配置”的归因，或者提示用户归因仅针对最新片段
                 display_w = current_weights
-                
-                if enable_rebalancing:
-                    st.caption("注：动态模式下，饼图仅展示【最新一期】的配置比例。")
+                if enable_rebalancing: st.caption("注：动态模式下，饼图仅展示【最新一期】的配置比例。")
 
                 if fee_mode_label == "组合策略表现 (底层净值)": df_attr = df_port_raw[list(display_w.keys())]
                 else: 
-                    # 重新计算一次 Net 方便展示
                     temp_net = pd.DataFrame()
                     for f in display_w.keys():
                         if f in df_port_raw.columns:
@@ -626,11 +605,9 @@ if check_password():
                         fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
                         st.plotly_chart(fig_beta, use_container_width=True)
                     
-                    # 相关性矩阵等
                     df_sub_rets = df_attr.pct_change().fillna(0)
                     st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
-                else:
-                    st.warning("⚠️ 无法获取当前配置的有效数据")
+                else: st.warning("⚠️ 无法获取当前配置的有效数据")
 
         with tabs[2]:
             c_t1, c_t2 = st.columns([3, 1])
@@ -640,6 +617,24 @@ if check_password():
             pool_options.sort()
             compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
             if compare_pool:
+                # [v7.1.1 New] 公平竞技场提示
+                valid_starts, valid_ends = [], []
+                for p in compare_pool:
+                    s = df_db[p].dropna()
+                    if not s.empty:
+                        valid_starts.append(s.index[0])
+                        valid_ends.append(s.index[-1])
+                if valid_starts and valid_ends:
+                    common_start = max(valid_starts)
+                    common_end = min(valid_ends)
+                    if common_end > common_start:
+                        bench_series = df_db.loc[common_start:common_end, sel_bench]
+                        if not bench_series.empty:
+                            bench_ret = (bench_series.iloc[-1] / bench_series.iloc[0]) - 1
+                            st.info(f"💡 **公平对比模式**：各产品公共存续期为 **{common_start.date()} 至 {common_end.date()}**。在此期间，基准 ({sel_bench}) 涨跌幅为 **{bench_ret:.2%}**。")
+                        else: st.info(f"💡 **公平对比模式**：公共存续期 **{common_start.date()} 至 {common_end.date()}**。")
+                    else: st.warning("⚠️ 选中产品没有公共交集时间段，无法进行公平对比。")
+
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
                 df_comp_raw = df_db[compare_pool].dropna() if is_aligned else df_db[compare_pool]
                 if comp_fee_mode == "费后 (Net)":
@@ -667,17 +662,14 @@ if check_password():
                                 res_data.append({"产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), "盈亏比": f"{k['盈亏比']:.2f}", "胜率": f"{k['正收益概率(日)']:.1%}", "VaR(95%)": f"{k['VaR(95%)']:.2%}", "上行捕获": f"{k['上行捕获']:.2f}", "下行捕获": f"{k['下行捕获']:.2f}", "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"})
                     if res_data: st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
                     
-                    # [Fix] 修复年度收益计算逻辑 v7.0.2
                     st.markdown("#### 📅 分年度收益率统计")
                     yearly_data = {}
                     for col in compare_pool:
                         if col in df_comp.columns:
                             s = df_comp[col].dropna()
                             if s.empty: continue
-                            try:
-                                yearly_nav = s.resample('YE').last() 
-                            except:
-                                yearly_nav = s.resample('A').last() 
+                            try: yearly_nav = s.resample('YE').last() 
+                            except: yearly_nav = s.resample('A').last() 
                             if yearly_nav.empty: continue
                             yearly_rets = yearly_nav.pct_change()
                             try:
@@ -689,8 +681,7 @@ if check_password():
                             except: pass
                             y_vals = {}
                             for date, ret in yearly_rets.items():
-                                if not pd.isna(ret):
-                                    y_vals[date.year] = ret
+                                if not pd.isna(ret): y_vals[date.year] = ret
                             yearly_data[col] = y_vals
                     if yearly_data:
                         df_yearly = pd.DataFrame(yearly_data).T
