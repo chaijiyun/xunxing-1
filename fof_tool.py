@@ -8,10 +8,10 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.0.2 - Core Logic
+# 寻星配置分析系统 v7.1.0 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 修复 TAB3 年度收益计算逻辑 (解决跨年缝隙问题)
+# Update: 新增动态调仓功能 (Dynamic Rebalancing)
 # ==========================================
 
 # ------------------------------------------
@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"
 
-# [Factory Reset] 出厂预设值 (基于最新提供的费率表)
+# [Factory Reset] 出厂预设值
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -64,6 +64,10 @@ if 'master_data' not in st.session_state:
     st.session_state.master_data = load_local_config()
 if 'portfolios_data' not in st.session_state:
     st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
+# [New] 动态调仓存储结构
+if 'rebalancing_data' not in st.session_state:
+    # 结构: DataFrame ['组合名称', '开始日期', '结束日期', '产品名称', '权重']
+    st.session_state.rebalancing_data = pd.DataFrame(columns=['组合名称', '开始日期', '结束日期', '产品名称', '权重'])
 
 # ------------------------------------------
 # 2. 登录与安全 (Security)
@@ -73,7 +77,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.2 <small>(Stable)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.0 <small>(Pro)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -130,7 +134,6 @@ if check_password():
             post_mdd_data = nav_series.loc[mdd_date:]
             recovery_mask = post_mdd_data >= peak_val_at_mdd
             mdd_recovery = f"{(recovery_mask.idxmax() - mdd_date).days}天" if recovery_mask.any() else "尚未修复"
-        
         is_at_new_high = (nav_series == cummax)
         high_dates = nav_series[is_at_new_high].index
         if len(high_dates) < 2:
@@ -182,7 +185,6 @@ if check_password():
             "dd_series": dd_s, "Beta": 0.0, "Current_Beta": 0.0, "Alpha": 0.0,
             "上行捕获": 0.0, "下行捕获": 0.0, "Rolling_Beta_Series": pd.Series(dtype='float64')
         }
-        
         if bench_nav is not None:
             common_idx = nav.index.intersection(bench_nav.index)
             if len(common_idx) > 10:
@@ -242,7 +244,6 @@ if check_password():
                 weighted_lockup += 6 * w 
         return weighted_lockup, worst_lockup, liquidity_notes
 
-    # [Improved] 智能频率感知的蒙特卡洛引擎
     def run_monte_carlo(historical_returns, n_simulations=1000, n_years=3, initial_capital=1000000):
         if historical_returns.empty or len(historical_returns) < 10: return None, 0, 0, ""
         try:
@@ -275,8 +276,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.2", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.0.2 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -317,7 +318,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v702"
+                use_container_width=True, hide_index=True, key="master_editor_v710"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -335,42 +336,84 @@ if check_password():
 
         st.sidebar.markdown("---")
         
-        # === 组合管理 ===
+        # === 组合管理 (升级版) ===
         st.sidebar.markdown("### 💼 组合配置")
         saved_names = st.session_state.portfolios_data['组合名称'].unique().tolist() if not st.session_state.portfolios_data.empty else []
         mode_options = ["🛠️ 自定义/新建"] + saved_names
         selected_mode = st.sidebar.selectbox("选择模式:", mode_options)
         
+        # [New] 动态调仓开关
+        enable_rebalancing = st.sidebar.checkbox("启用动态调仓模式 (Rebalancing)", value=False)
+        
         sel_funds = []
         weights = {}
+        # 复杂模式变量
+        rebal_schedule = [] # List of (Start_Date, End_Date, {Fund: Weight})
+        
         default_bench = '沪深300' if '沪深300' in all_cols else all_cols[0]
         sel_bench = st.sidebar.selectbox("业绩基准", all_cols, index=all_cols.index(default_bench))
         
         if selected_mode == "🛠️ 自定义/新建":
             available_funds = [c for c in all_cols if c != sel_bench]
             available_funds.sort()
-            sel_funds = st.sidebar.multiselect("挑选成分基金", available_funds)
-            if sel_funds:
-                st.sidebar.markdown("#### ⚖️ 权重")
-                avg_w = 1.0 / len(sel_funds)
-                for f in sel_funds: weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
-                with st.sidebar.expander("💾 保存组合", expanded=True):
-                    new_p_name = st.text_input("组合名称", placeholder="如: 稳健1号")
-                    if st.button("保存"):
-                        if new_p_name and sel_funds:
-                            new_records = [{'组合名称': new_p_name, '产品名称': f, '权重': w} for f, w in weights.items()]
-                            old_df = st.session_state.portfolios_data
-                            new_df = pd.DataFrame(new_records)
-                            updated_df = pd.concat([old_df[old_df['组合名称']!=new_p_name], new_df], ignore_index=True)
-                            st.session_state.portfolios_data = updated_df
-                            st.toast(f"组合 {new_p_name} 已保存", icon="✅")
-                            st.rerun()
+            
+            if not enable_rebalancing:
+                # --- 简单静态模式 ---
+                sel_funds = st.sidebar.multiselect("挑选成分基金", available_funds)
+                if sel_funds:
+                    st.sidebar.markdown("#### ⚖️ 权重")
+                    avg_w = 1.0 / len(sel_funds)
+                    for f in sel_funds: weights[f] = st.sidebar.number_input(f"{f}", 0.0, 1.0, avg_w, step=0.05)
+                    
+                    with st.sidebar.expander("💾 保存组合", expanded=True):
+                        new_p_name = st.text_input("组合名称", placeholder="如: 稳健1号")
+                        if st.button("保存"):
+                            if new_p_name and sel_funds:
+                                new_records = [{'组合名称': new_p_name, '产品名称': f, '权重': w} for f, w in weights.items()]
+                                old_df = st.session_state.portfolios_data
+                                new_df = pd.DataFrame(new_records)
+                                updated_df = pd.concat([old_df[old_df['组合名称']!=new_p_name], new_df], ignore_index=True)
+                                st.session_state.portfolios_data = updated_df
+                                st.toast(f"组合 {new_p_name} 已保存", icon="✅")
+                                st.rerun()
+            else:
+                # --- [New] 动态调仓模式 ---
+                st.sidebar.info("📅 动态调仓：请按时间段配置持仓。系统将自动链接净值。")
+                rebal_periods = st.sidebar.number_input("调仓次数 (时间段数)", 1, 10, 2)
+                
+                valid_rebal_config = True
+                
+                for i in range(rebal_periods):
+                    st.sidebar.markdown(f"**🗓️ 第 {i+1} 阶段配置**")
+                    col_d1, col_d2 = st.sidebar.columns(2)
+                    d_start = col_d1.date_input(f"开始日期 (P{i+1})", value=df_raw.index.min().date(), key=f"d_s_{i}")
+                    d_end = col_d2.date_input(f"结束日期 (P{i+1})", value=df_raw.index.max().date(), key=f"d_e_{i}")
+                    
+                    p_funds = st.sidebar.multiselect(f"成分基金 (P{i+1})", available_funds, key=f"fs_{i}")
+                    p_weights = {}
+                    if p_funds:
+                        avg_w_p = 1.0 / len(p_funds)
+                        for f in p_funds: 
+                            p_weights[f] = st.sidebar.number_input(f"权重: {f}", 0.0, 1.0, avg_w_p, step=0.1, key=f"w_{i}_{f}")
+                        rebal_schedule.append((d_start, d_end, p_weights))
+                        # 收集所有涉及的基金用于后续计算
+                        for f in p_funds: 
+                            if f not in sel_funds: sel_funds.append(f)
+                    else:
+                        valid_rebal_config = False
         else:
+            # --- 加载已有组合 ---
             subset = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] == selected_mode]
             valid_subset = subset[subset['产品名称'].isin(all_cols)]
-            sel_funds = valid_subset['产品名称'].tolist()
-            weights = {row['产品名称']: row['权重'] for _, row in valid_subset.iterrows()}
-            st.sidebar.table(valid_subset[['产品名称', '权重']].set_index('产品名称').style.format("{:.1%}"))
+            if not valid_subset.empty:
+                sel_funds = valid_subset['产品名称'].tolist()
+                weights = {row['产品名称']: row['权重'] for _, row in valid_subset.iterrows()}
+                st.sidebar.table(valid_subset[['产品名称', '权重']].set_index('产品名称').style.format("{:.1%}"))
+                
+                # 目前暂不支持加载动态组合（需要复杂的数据结构支持，此处简化为只加载静态）
+                if enable_rebalancing:
+                    st.sidebar.warning("⚠️ 当前暂不支持从存档加载动态调仓配置，请使用'自定义/新建'模式进行动态分析。")
+            
             if st.sidebar.button("🗑️ 删除此组合"):
                 updated = st.session_state.portfolios_data[st.session_state.portfolios_data['组合名称'] != selected_mode]
                 st.session_state.portfolios_data = updated
@@ -388,39 +431,108 @@ if check_password():
             fee_mode_label = st.sidebar.radio("展示视角", ("客户实得回报 (实盘费后)", "组合策略表现 (底层净值)", "收益与运作成本分析"), index=0)
 
         # ==========================================
-        # 计算逻辑执行
+        # 计算逻辑执行 (核心升级)
         # ==========================================
         df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
         star_nav = None; star_nav_gross = None; star_nav_net = None
         star_rets_for_mc = None 
 
         if sel_funds and not df_db.empty:
-            df_port = df_db[sel_funds].ffill().dropna(how='all')
-            if not df_port.empty:
-                norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
+            # 1. 准备基础数据 (所有涉及到的基金)
+            df_port_raw = df_db[sel_funds].ffill().dropna(how='all')
+            
+            if not df_port_raw.empty:
                 
-                # Gross
-                star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
-                star_nav_gross = (1 + star_rets_gross).cumprod()
-                star_nav_gross.name = "组合策略表现 (底层净值)"
-
-                # Net
-                if fee_mode_label != "组合策略表现 (底层净值)":
-                    net_funds_df = pd.DataFrame(index=df_port.index)
-                    for f in sel_funds:
-                        gross_series = df_port[f]
-                        info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
-                        mgmt = info.get('年管理费(%)', 0) / 100.0
-                        perf = info.get('业绩报酬(%)', 0) / 100.0
-                        net_funds_df[f] = calculate_net_nav_series(gross_series, mgmt, perf)
+                # ---------------------------------------------------
+                # 分支 A: 静态组合计算 (Legacy)
+                # ---------------------------------------------------
+                if not enable_rebalancing:
+                    norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                     
-                    star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
-                    star_nav_net = (1 + star_rets_net).cumprod()
-                    star_nav_net.name = "寻星配置实得回报"
-                    star_rets_for_mc = star_rets_net 
-                else:
-                    star_rets_for_mc = star_rets_gross 
+                    # Gross
+                    star_rets_gross = (df_port_raw.pct_change().fillna(0) * norm_w).sum(axis=1)
+                    star_nav_gross = (1 + star_rets_gross).cumprod()
+                    star_nav_gross.name = "组合策略表现 (底层净值)"
 
+                    # Net
+                    if fee_mode_label != "组合策略表现 (底层净值)":
+                        net_funds_df = pd.DataFrame(index=df_port_raw.index)
+                        for f in sel_funds:
+                            gross_series = df_port_raw[f]
+                            info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
+                            mgmt = info.get('年管理费(%)', 0) / 100.0
+                            perf = info.get('业绩报酬(%)', 0) / 100.0
+                            net_funds_df[f] = calculate_net_nav_series(gross_series, mgmt, perf)
+                        
+                        star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
+                        star_nav_net = (1 + star_rets_net).cumprod()
+                        star_nav_net.name = "寻星配置实得回报"
+                        star_rets_for_mc = star_rets_net 
+                    else:
+                        star_rets_for_mc = star_rets_gross
+                
+                # ---------------------------------------------------
+                # 分支 B: 动态调仓计算 (New Engine)
+                # ---------------------------------------------------
+                else:
+                    # 初始化全时间段的收益序列
+                    full_rets_gross = pd.Series(0.0, index=df_port_raw.index)
+                    full_rets_net = pd.Series(0.0, index=df_port_raw.index)
+                    
+                    for (d_s, d_e, p_w) in rebal_schedule:
+                        # 截取该时间段的数据
+                        # 转换日期为 Timestamp 以进行比较
+                        ts_start = pd.Timestamp(d_s)
+                        ts_end = pd.Timestamp(d_e)
+                        
+                        mask = (df_port_raw.index >= ts_start) & (df_port_raw.index <= ts_end)
+                        if not mask.any(): continue
+                        
+                        sub_df = df_port_raw.loc[mask]
+                        # 归一化权重
+                        sub_w = pd.Series(p_w)
+                        if sub_w.sum() == 0: continue
+                        sub_w = sub_w / sub_w.sum()
+                        
+                        # 计算该片段 Gross Return
+                        # 注意：片段内的收益计算
+                        sub_rets = sub_df.pct_change().fillna(0)
+                        # 只取选中的基金
+                        valid_funds = [f for f in sub_w.index if f in sub_df.columns]
+                        if not valid_funds: continue
+                        
+                        seg_ret_gross = (sub_rets[valid_funds] * sub_w[valid_funds]).sum(axis=1)
+                        full_rets_gross.loc[mask] = seg_ret_gross
+                        
+                        # 计算该片段 Net Return
+                        if fee_mode_label != "组合策略表现 (底层净值)":
+                            sub_net_df = pd.DataFrame(index=sub_df.index)
+                            for f in valid_funds:
+                                g_s = sub_df[f] # Gross Series Slice
+                                info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
+                                # 绝对价格计提：每个片段都把起点的成本视为基准，这是一个简化但合理的处理
+                                # 更精确的做法应该追踪全周期的 High Water Mark，但对于“换基”操作，
+                                # 新买入的基金确实是重新计算成本线的。
+                                m_rate = info.get('年管理费(%)', 0) / 100.0
+                                p_rate = info.get('业绩报酬(%)', 0) / 100.0
+                                sub_net_df[f] = calculate_net_nav_series(g_s, m_rate, p_rate)
+                            
+                            seg_ret_net = (sub_net_df.pct_change().fillna(0) * sub_w[valid_funds]).sum(axis=1)
+                            full_rets_net.loc[mask] = seg_ret_net
+                            
+                    # 拼接完成，计算累计净值
+                    star_nav_gross = (1 + full_rets_gross).cumprod()
+                    star_nav_gross.name = "组合策略表现 (动态调仓)"
+                    
+                    star_nav_net = (1 + full_rets_net).cumprod()
+                    star_nav_net.name = "寻星配置实得回报 (动态调仓)"
+                    
+                    if fee_mode_label != "组合策略表现 (底层净值)":
+                        star_rets_for_mc = full_rets_net
+                    else:
+                        star_rets_for_mc = full_rets_gross
+
+                # 最终输出赋值
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
@@ -432,11 +544,16 @@ if check_password():
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
-            avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(weights, st.session_state.master_data)
+            # 动态模式下，流动性风险取最后一个片段的配置
+            current_weights = weights if not enable_rebalancing else (rebal_schedule[-1][2] if rebal_schedule else {})
+            avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(current_weights, st.session_state.master_data)
 
         with tabs[0]:
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
+                if enable_rebalancing:
+                    st.info("💡 **当前为动态调仓模式**：曲线由多个时间段的配置拼接而成。")
+                
                 c_top = st.columns(8)
                 c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
                 c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
@@ -475,41 +592,45 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                if fee_mode_label == "组合策略表现 (底层净值)": df_attr = df_port
-                else: df_attr = net_funds_df
-                initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
-                growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
-                latest_values = initial_w_series * growth_factors
-                latest_w_series = latest_values / latest_values.sum()
+                # 动态模式下，归因展示的是“当前最新配置”的归因，或者提示用户归因仅针对最新片段
+                display_w = current_weights
+                
+                if enable_rebalancing:
+                    st.caption("注：动态模式下，饼图仅展示【最新一期】的配置比例。")
 
-                col_w1, col_w2 = st.columns(2)
-                col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例", color=initial_w_series.index, color_discrete_map=color_map), use_container_width=True)
-                col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)", color=latest_w_series.index, color_discrete_map=color_map), use_container_width=True)
+                if fee_mode_label == "组合策略表现 (底层净值)": df_attr = df_port_raw[list(display_w.keys())]
+                else: 
+                    # 重新计算一次 Net 方便展示
+                    temp_net = pd.DataFrame()
+                    for f in display_w.keys():
+                        if f in df_port_raw.columns:
+                            info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
+                            temp_net[f] = calculate_net_nav_series(df_port_raw[f], info.get('年管理费(%)',0)/100, info.get('业绩报酬(%)',0)/100)
+                    df_attr = temp_net
 
-                if not m['Rolling_Beta_Series'].empty:
-                    st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
-                    fig_beta = go.Figure()
-                    fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
-                    fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值")
-                    fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
-                    st.plotly_chart(fig_beta, use_container_width=True)
+                if not df_attr.empty:
+                    initial_w_series = pd.Series(display_w) / (sum(display_w.values()) if sum(display_w.values()) > 0 else 1)
+                    growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
+                    latest_values = initial_w_series * growth_factors
+                    latest_w_series = latest_values / latest_values.sum()
 
-                df_sub_rets = df_attr.pct_change().fillna(0)
-                risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) 
-                contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
-                col_attr1, col_attr2 = st.columns(2)
-                col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因", color=risk_vals.index, color_discrete_map=color_map), use_container_width=True)
-                col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因", color=contribution_vals.index, color_discrete_map=color_map), use_container_width=True)
-                st.markdown("---")
-                st.markdown("#### 底层产品走势对比")
-                df_sub_norm = df_attr.div(df_attr.iloc[0])
-                fig_sub_compare = go.Figure()
-                for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
-                if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
-                st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
-                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
+                    col_w1, col_w2 = st.columns(2)
+                    col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="当前阶段初始配置", color=initial_w_series.index, color_discrete_map=color_map), use_container_width=True)
+                    col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="当前阶段最新漂移", color=latest_w_series.index, color_discrete_map=color_map), use_container_width=True)
+
+                    if not m['Rolling_Beta_Series'].empty:
+                        st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
+                        fig_beta = go.Figure()
+                        fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
+                        fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值")
+                        fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
+                        st.plotly_chart(fig_beta, use_container_width=True)
+                    
+                    # 相关性矩阵等
+                    df_sub_rets = df_attr.pct_change().fillna(0)
+                    st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
+                else:
+                    st.warning("⚠️ 无法获取当前配置的有效数据")
 
         with tabs[2]:
             c_t1, c_t2 = st.columns([3, 1])
@@ -546,30 +667,19 @@ if check_password():
                                 res_data.append({"产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), "盈亏比": f"{k['盈亏比']:.2f}", "胜率": f"{k['正收益概率(日)']:.1%}", "VaR(95%)": f"{k['VaR(95%)']:.2%}", "上行捕获": f"{k['上行捕获']:.2f}", "下行捕获": f"{k['下行捕获']:.2f}", "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"})
                     if res_data: st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
                     
-                    # -------------------------------------------------------
                     # [Fix] 修复年度收益计算逻辑 v7.0.2
-                    # 旧逻辑会丢失跨年周的收益，新逻辑基于 "End/Prev_End"
-                    # -------------------------------------------------------
                     st.markdown("#### 📅 分年度收益率统计")
                     yearly_data = {}
                     for col in compare_pool:
                         if col in df_comp.columns:
                             s = df_comp[col].dropna()
                             if s.empty: continue
-                            
-                            # 1. 取每年的最后一个净值
                             try:
-                                yearly_nav = s.resample('YE').last() # Pandas 2.x
+                                yearly_nav = s.resample('YE').last() 
                             except:
-                                yearly_nav = s.resample('A').last()  # Pandas 1.x Fallback
-                                
+                                yearly_nav = s.resample('A').last() 
                             if yearly_nav.empty: continue
-
-                            # 2. 计算基于上年末的涨跌幅
                             yearly_rets = yearly_nav.pct_change()
-
-                            # 3. 修正第一年 (成立年) 的收益
-                            # 第一年的收益 = 第一年年末 / 成立日净值 - 1
                             try:
                                 first_year = yearly_nav.index[0].year
                                 first_val = s.iloc[0]
@@ -577,22 +687,15 @@ if check_password():
                                 first_year_ret = (end_val_first_year / first_val) - 1
                                 yearly_rets.iloc[0] = first_year_ret
                             except: pass
-
-                            # 4. 格式化输出
                             y_vals = {}
                             for date, ret in yearly_rets.items():
                                 if not pd.isna(ret):
                                     y_vals[date.year] = ret
-                            
                             yearly_data[col] = y_vals
-                    
                     if yearly_data:
                         df_yearly = pd.DataFrame(yearly_data).T
-                        # 按年份排序
                         df_yearly = df_yearly[sorted(df_yearly.columns)]
                         st.dataframe(df_yearly.style.format("{:.2%}"), use_container_width=True)
-                    # -------------------------------------------------------
-
                 else: st.warning("⚠️ 数据不足")
             st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
