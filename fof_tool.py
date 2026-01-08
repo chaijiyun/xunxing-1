@@ -8,10 +8,10 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.1.1 - Core Logic
+# 寻星配置分析系统 v7.1.2 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 全量完整版 (含数据监控、动态调仓、完整字典)
+# Update: TAB3 强制周频对齐 + 增加波动率指标
 # ==========================================
 
 # ------------------------------------------
@@ -75,7 +75,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.1 <small>(Insight)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.2 <small>(Fair Play)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -274,8 +274,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.1.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.2", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.2 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -316,7 +316,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v711"
+                use_container_width=True, hide_index=True, key="master_editor_v712"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -617,7 +617,7 @@ if check_password():
             pool_options.sort()
             compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
             if compare_pool:
-                # [v7.1.1 New] 公平竞技场提示
+                # [v7.1.1] 公平竞技场提示
                 valid_starts, valid_ends = [], []
                 for p in compare_pool:
                     s = df_db[p].dropna()
@@ -657,9 +657,36 @@ if check_password():
                     res_data = []
                     for col in compare_pool:
                         if col in df_comp.columns:
-                            k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
+                            # --------------------------------------------------------------------------------
+                            # [Updated Logic] 强制周频对齐 (Force Weekly Alignment for Fair Comparison)
+                            # --------------------------------------------------------------------------------
+                            try:
+                                # 强制重采样到每周五 (W-FRI)
+                                s_weekly = df_comp[col].resample('W-FRI').last().dropna()
+                                b_weekly = df_db[sel_bench].resample('W-FRI').last().dropna()
+                                
+                                # 使用重采样后的周频数据计算指标
+                                k = calculate_metrics(s_weekly, b_weekly) 
+                            except:
+                                # Fallback (如果数据太少无法重采样)
+                                k = calculate_metrics(df_comp[col], df_db[sel_bench])
+                                
                             if k: 
-                                res_data.append({"产品名称": col, "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}", "夏普": round(k['夏普比率'], 2), "盈亏比": f"{k['盈亏比']:.2f}", "胜率": f"{k['正收益概率(日)']:.1%}", "VaR(95%)": f"{k['VaR(95%)']:.2%}", "上行捕获": f"{k['上行捕获']:.2f}", "下行捕获": f"{k['下行捕获']:.2f}", "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"})
+                                res_data.append({
+                                    "产品名称": col, 
+                                    "总收益": f"{k['总收益率']:.2%}", 
+                                    "年化收益": f"{k['年化收益']:.2%}", 
+                                    "年化波动": f"{k['年化波动率']:.2%}",  # <--- [New] Added Volatility
+                                    "最大回撤": f"{k['最大回撤']:.2%}", 
+                                    "夏普": round(k['夏普比率'], 2), 
+                                    "盈亏比": f"{k['盈亏比']:.2f}", 
+                                    "胜率": f"{k['正收益概率(日)']:.1%}", 
+                                    "VaR(95%)": f"{k['VaR(95%)']:.2%}", 
+                                    "上行捕获": f"{k['上行捕获']:.2f}", 
+                                    "下行捕获": f"{k['下行捕获']:.2f}", 
+                                    "Alpha": f"{k['Alpha']:.2%}", 
+                                    "Beta": f"{k['Beta']:.2f}"
+                                })
                     if res_data: st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
                     
                     st.markdown("#### 📅 分年度收益率统计")
@@ -690,7 +717,6 @@ if check_password():
                 else: st.warning("⚠️ 数据不足")
             st.markdown("---")
             
-            # [Full Content Restored] 完整保留字典内容
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
                 st.markdown("""
                 ### 1. 核心收益指标
