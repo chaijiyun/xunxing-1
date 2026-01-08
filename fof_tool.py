@@ -8,10 +8,10 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.1.2 - Core Logic
+# 寻星配置分析系统 v7.1.4 - Core Logic
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: TAB3 强制周频对齐 + 增加波动率指标
+# Update: 智能费率豁免 + 全量功能修复 + 完整文本
 # ==========================================
 
 # ------------------------------------------
@@ -75,7 +75,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.2 <small>(Fair Play)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.4 <small>(Final)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -274,8 +274,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.2", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.1.2 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.4", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.4 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -316,7 +316,7 @@ if check_password():
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v712"
+                use_container_width=True, hide_index=True, key="master_editor_v714"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -613,11 +613,12 @@ if check_password():
             c_t1, c_t2 = st.columns([3, 1])
             with c_t1: st.subheader("⚔️ 配置池产品分析")
             with c_t2: comp_fee_mode = st.selectbox("展示视角", ["费前 (Gross)", "费后 (Net)"], index=0)
-            pool_options = [c for c in all_cols if c != sel_bench]
-            pool_options.sort()
+            
+            # Allow index selection (Sorted)
+            pool_options = sorted([c for c in all_cols if c != '日期']) 
             compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
+            
             if compare_pool:
-                # [v7.1.1] 公平竞技场提示
                 valid_starts, valid_ends = [], []
                 for p in compare_pool:
                     s = df_db[p].dropna()
@@ -642,11 +643,28 @@ if check_password():
                     for p in compare_pool:
                         s_raw = df_comp_raw[p].dropna()
                         if s_raw.empty: continue
-                        info = MASTER_DICT.get(p, DEFAULT_MASTER_ROW)
-                        m_rate = info.get('年管理费(%)', 0) / 100.0
-                        p_rate = info.get('业绩报酬(%)', 0) / 100.0
+                        
+                        # -----------------------------------------------------------
+                        # [v7.1.4 Smart Fix] 智能费率豁免逻辑
+                        # 目的：区分 "中证500指数"(免费) 和 "平方和500指增"(收费)
+                        # -----------------------------------------------------------
+                        index_keywords = ['指数', '沪深300', '中证500', '中证1000', '上证50', '创业板指', '恒生指数', '标普500', '纳斯达克']
+                        fund_keywords = ['增强', '指增', '量化', '私募', '基金', '策略', '成长', '价值', '优选', '混合', '股票', '运作', '1号', '2号', 'A期', 'B期']
+                        is_index = False
+                        if (any(k in p for k in index_keywords) or p == sel_bench): is_index = True
+                        if any(k in p for k in fund_keywords): is_index = False
+                        if p in ['沪深300', '中证500', '中证1000', '南华商品指数']: is_index = True
+                        # -----------------------------------------------------------
+
+                        if is_index: m_rate, p_rate = 0.0, 0.0
+                        else:
+                            info = MASTER_DICT.get(p, DEFAULT_MASTER_ROW)
+                            m_rate = info.get('年管理费(%)', 0) / 100.0
+                            p_rate = info.get('业绩报酬(%)', 0) / 100.0
+                            
                         df_comp[p] = calculate_net_nav_series(s_raw, m_rate, p_rate)
                 else: df_comp = df_comp_raw
+                
                 if not df_comp.empty:
                     fig_p = go.Figure()
                     for col in compare_pool:
@@ -657,18 +675,11 @@ if check_password():
                     res_data = []
                     for col in compare_pool:
                         if col in df_comp.columns:
-                            # --------------------------------------------------------------------------------
-                            # [Updated Logic] 强制周频对齐 (Force Weekly Alignment for Fair Comparison)
-                            # --------------------------------------------------------------------------------
                             try:
-                                # 强制重采样到每周五 (W-FRI)
                                 s_weekly = df_comp[col].resample('W-FRI').last().dropna()
                                 b_weekly = df_db[sel_bench].resample('W-FRI').last().dropna()
-                                
-                                # 使用重采样后的周频数据计算指标
                                 k = calculate_metrics(s_weekly, b_weekly) 
                             except:
-                                # Fallback (如果数据太少无法重采样)
                                 k = calculate_metrics(df_comp[col], df_db[sel_bench])
                                 
                             if k: 
@@ -676,7 +687,7 @@ if check_password():
                                     "产品名称": col, 
                                     "总收益": f"{k['总收益率']:.2%}", 
                                     "年化收益": f"{k['年化收益']:.2%}", 
-                                    "年化波动": f"{k['年化波动率']:.2%}",  # <--- [New] Added Volatility
+                                    "年化波动": f"{k['年化波动率']:.2%}",
                                     "最大回撤": f"{k['最大回撤']:.2%}", 
                                     "夏普": round(k['夏普比率'], 2), 
                                     "盈亏比": f"{k['盈亏比']:.2f}", 
