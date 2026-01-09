@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.2 - UI Polish
+# 寻星配置分析系统 v6.3.3 - Tab Reordered
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 优化展示视角名称 (简洁化)
+# Update: 将“配置池产品分析”调整为首屏展示
 # ==========================================
 
 # ------------------------------------------
@@ -77,7 +77,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.2 <small>(UI Polish)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.3 <small>(Tab Reorder)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -272,8 +272,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.2", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.2 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.3", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.3 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -390,7 +390,6 @@ if check_password():
             for i, f in enumerate(sel_funds): color_map[f] = colors[i % len(colors)]
 
         st.sidebar.markdown("---")
-        # [Update: Renamed Labels]
         fee_mode_label = "组合实得回报"
         if sel_funds:
             fee_mode_label = st.sidebar.radio("展示视角", ("组合实得回报", "组合策略表现", "收益与运作成本分析"), index=0)
@@ -410,7 +409,7 @@ if check_password():
                 # Gross
                 star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
                 star_nav_gross = (1 + star_rets_gross).cumprod()
-                star_nav_gross.name = "组合策略表现" # [Update: Renamed]
+                star_nav_gross.name = "组合策略表现"
 
                 # Net
                 if fee_mode_label != "组合策略表现":
@@ -424,7 +423,7 @@ if check_password():
                     
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
-                    star_nav_net.name = "组合实得回报" # [Update: Renamed]
+                    star_nav_net.name = "组合实得回报"
 
                 star_nav = star_nav_gross if fee_mode_label == "组合策略表现" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
@@ -433,97 +432,15 @@ if check_password():
         # ==========================================
         # 可视化 (Visualization)
         # ==========================================
-        tabs = st.tabs(["🚀 组合全景图", "🔍 穿透归因分析", "⚔️ 配置池产品分析"])
+        # [Update: Tab Order Changed]
+        tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析"])
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
             avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(weights, st.session_state.master_data)
 
+        # === 1. 配置池产品分析 (Originally Tab 3, Now Tab 0) ===
         with tabs[0]:
-            if star_nav is not None:
-                st.subheader(f"📊 {star_nav.name}")
-                
-                c_top = st.columns(8)
-                c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
-                c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
-                c_top[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
-                c_top[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
-                c_top[4].metric("索提诺", f"{m['索提诺比率']:.2f}")
-                c_top[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
-                c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
-                c_top[7].metric("组合Beta", f"{m['Beta']:.2f}", help="组合全周期历史Beta (配置初心)")
-                
-                fig_main = go.Figure()
-                if fee_mode_label == "收益与运作成本分析":
-                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="组合实得回报", line=dict(color='red', width=3)))
-                    fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="组合策略表现", line=dict(color='gray', width=2, dash='dash')))
-                    loss_amt = star_nav_gross.iloc[-1] - star_nav_net.iloc[-1]
-                    loss_pct = 1 - (star_nav_net.iloc[-1] / star_nav_gross.iloc[-1])
-                    st.info(f"💡 **成本分析**：在此期间，组合的策略运作与配置服务成本约为 **{loss_amt:.3f}** (费效比 {loss_pct:.2%})。")
-                else:
-                    fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
-                
-                fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#1F2937', width=2, dash='solid'), opacity=0.6))
-                fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
-                st.plotly_chart(fig_main, use_container_width=True)
-
-                st.markdown("#### 🛡️ 风险体验与风格监控")
-                c_risk = st.columns(5) 
-                c_risk[0].metric("最大回撤修复", m['最大回撤修复时间'])
-                c_risk[1].metric("最长创新高间隔", m['最大无新高持续时间'])
-                c_risk[2].metric("盈亏比", f"{m['盈亏比']:.2f}", help="平均盈利/平均亏损")
-                c_risk[3].metric("Current Beta", f"{m['Current_Beta']:.2f}", help="组合近半年滚动Beta (当前状态)")
-                c_risk[4].metric("VaR (95%)", f"{m['VaR(95%)']:.2%}", help="历史最差5%的日均亏损")
-                
-                beta_drift = abs(m['Current_Beta'] - m['Beta'])
-                if beta_drift > 0.1: st.warning(f"⚠️ **风格漂移预警**：Beta 偏差 {beta_drift:.2f} (初心 {m['Beta']:.2f} vs 现状 {m['Current_Beta']:.2f})。")
-                if lock_notes: st.warning(f"⚠️ **流动性警示**：{' '.join(lock_notes)}")
-
-            else: st.info("👈 请在左侧选择或加载组合。")
-
-        with tabs[1]:
-            if sel_funds:
-                st.subheader("🔍 寻星配置穿透归因分析")
-                if fee_mode_label == "组合策略表现": df_attr = df_port
-                else: df_attr = net_funds_df
-                initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
-                growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
-                latest_values = initial_w_series * growth_factors
-                latest_w_series = latest_values / latest_values.sum()
-
-                col_w1, col_w2 = st.columns(2)
-                col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例", color=initial_w_series.index, color_discrete_map=color_map), use_container_width=True)
-                col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)", color=latest_w_series.index, color_discrete_map=color_map), use_container_width=True)
-
-                if not m['Rolling_Beta_Series'].empty:
-                    st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
-                    fig_beta = go.Figure()
-                    fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
-                    fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值")
-                    fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
-                    st.plotly_chart(fig_beta, use_container_width=True)
-
-                df_sub_rets = df_attr.pct_change().fillna(0)
-                risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) 
-                contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
-
-                col_attr1, col_attr2 = st.columns(2)
-                col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因", color=risk_vals.index, color_discrete_map=color_map), use_container_width=True)
-                col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因", color=contribution_vals.index, color_discrete_map=color_map), use_container_width=True)
-
-                st.markdown("---")
-                st.markdown("#### 底层产品走势对比")
-                df_sub_norm = df_attr.div(df_attr.iloc[0])
-                fig_sub_compare = go.Figure()
-                for col in df_sub_norm.columns:
-                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
-                if star_nav is not None:
-                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
-                st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
-                
-                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
-
-        with tabs[2]:
             c_t1, c_t2 = st.columns([3, 1])
             with c_t1: st.subheader("⚔️ 配置池产品分析")
             with c_t2: 
@@ -622,4 +539,91 @@ if check_password():
                     * **下行**：市场跌 1% 他跌多少？（希望 < 50%）
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
+
+        # === 2. 组合全景图 (Originally Tab 1, Now Tab 1) ===
+        with tabs[1]:
+            if star_nav is not None:
+                st.subheader(f"📊 {star_nav.name}")
+                
+                c_top = st.columns(8)
+                c_top[0].metric("总收益率", f"{m['总收益率']:.2%}")
+                c_top[1].metric("年化收益", f"{m['年化收益']:.2%}")
+                c_top[2].metric("最大回撤", f"{m['最大回撤']:.2%}")
+                c_top[3].metric("夏普比率", f"{m['夏普比率']:.2f}")
+                c_top[4].metric("索提诺", f"{m['索提诺比率']:.2f}")
+                c_top[5].metric("卡玛比率", f"{m['卡玛比率']:.2f}")
+                c_top[6].metric("年化波动", f"{m['年化波动率']:.2%}")
+                c_top[7].metric("组合Beta", f"{m['Beta']:.2f}", help="组合全周期历史Beta (配置初心)")
+                
+                fig_main = go.Figure()
+                if fee_mode_label == "收益与运作成本分析":
+                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="组合实得回报", line=dict(color='red', width=3)))
+                    fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="组合策略表现", line=dict(color='gray', width=2, dash='dash')))
+                    loss_amt = star_nav_gross.iloc[-1] - star_nav_net.iloc[-1]
+                    loss_pct = 1 - (star_nav_net.iloc[-1] / star_nav_gross.iloc[-1])
+                    st.info(f"💡 **成本分析**：在此期间，组合的策略运作与配置服务成本约为 **{loss_amt:.3f}** (费效比 {loss_pct:.2%})。")
+                else:
+                    fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
+                
+                fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#1F2937', width=2, dash='solid'), opacity=0.6))
+                fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
+                st.plotly_chart(fig_main, use_container_width=True)
+
+                st.markdown("#### 🛡️ 风险体验与风格监控")
+                c_risk = st.columns(5) 
+                c_risk[0].metric("最大回撤修复", m['最大回撤修复时间'])
+                c_risk[1].metric("最长创新高间隔", m['最大无新高持续时间'])
+                c_risk[2].metric("盈亏比", f"{m['盈亏比']:.2f}", help="平均盈利/平均亏损")
+                c_risk[3].metric("Current Beta", f"{m['Current_Beta']:.2f}", help="组合近半年滚动Beta (当前状态)")
+                c_risk[4].metric("VaR (95%)", f"{m['VaR(95%)']:.2%}", help="历史最差5%的日均亏损")
+                
+                beta_drift = abs(m['Current_Beta'] - m['Beta'])
+                if beta_drift > 0.1: st.warning(f"⚠️ **风格漂移预警**：Beta 偏差 {beta_drift:.2f} (初心 {m['Beta']:.2f} vs 现状 {m['Current_Beta']:.2f})。")
+                if lock_notes: st.warning(f"⚠️ **流动性警示**：{' '.join(lock_notes)}")
+
+            else: st.info("👈 请在左侧选择或加载组合。")
+
+        # === 3. 穿透归因分析 (Originally Tab 2, Now Tab 2) ===
+        with tabs[2]:
+            if sel_funds:
+                st.subheader("🔍 寻星配置穿透归因分析")
+                if fee_mode_label == "组合策略表现": df_attr = df_port
+                else: df_attr = net_funds_df
+                initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
+                growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
+                latest_values = initial_w_series * growth_factors
+                latest_w_series = latest_values / latest_values.sum()
+
+                col_w1, col_w2 = st.columns(2)
+                col_w1.plotly_chart(px.pie(names=initial_w_series.index, values=initial_w_series.values, hole=0.4, title="初始配置比例", color=initial_w_series.index, color_discrete_map=color_map), use_container_width=True)
+                col_w2.plotly_chart(px.pie(names=latest_w_series.index, values=latest_w_series.values, hole=0.4, title="最新配置比例(漂移)", color=latest_w_series.index, color_discrete_map=color_map), use_container_width=True)
+
+                if not m['Rolling_Beta_Series'].empty:
+                    st.markdown("#### 📉 风格动态归因：Beta 漂移路径")
+                    fig_beta = go.Figure()
+                    fig_beta.add_trace(go.Scatter(x=m['Rolling_Beta_Series'].index, y=m['Rolling_Beta_Series'], name="滚动半年 Beta", line=dict(color='#2563EB', width=2)))
+                    fig_beta.add_hline(y=m['Beta'], line_dash="dash", line_color="green", annotation_text="全周期均值")
+                    fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
+                    st.plotly_chart(fig_beta, use_container_width=True)
+
+                df_sub_rets = df_attr.pct_change().fillna(0)
+                risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) 
+                contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
+
+                col_attr1, col_attr2 = st.columns(2)
+                col_attr1.plotly_chart(px.pie(names=risk_vals.index, values=risk_vals.values, hole=0.4, title="风险贡献归因", color=risk_vals.index, color_discrete_map=color_map), use_container_width=True)
+                col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因", color=contribution_vals.index, color_discrete_map=color_map), use_container_width=True)
+
+                st.markdown("---")
+                st.markdown("#### 底层产品走势对比")
+                df_sub_norm = df_attr.div(df_attr.iloc[0])
+                fig_sub_compare = go.Figure()
+                for col in df_sub_norm.columns:
+                    fig_sub_compare.add_trace(go.Scatter(x=df_sub_norm.index, y=df_sub_norm[col], name=col, opacity=0.6, line=dict(color=color_map.get(col))))
+                if star_nav is not None:
+                    fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
+                st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
+                
+                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
+
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
