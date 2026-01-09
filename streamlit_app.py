@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.1 - Core Logic
+# 寻星配置分析系统 v6.3.2 - UI Polish
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 集成费率热更新 + 本地持久化记忆 + 界面优化
+# Update: 优化展示视角名称 (简洁化)
 # ==========================================
 
 # ------------------------------------------
@@ -19,8 +19,7 @@ from datetime import datetime
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"  # 本地持久化存储文件
 
-# [Factory Reset] 出厂预设值 (基于最新提供的费率表)
-# 如果本地没有存档，系统将默认加载此列表
+# [Factory Reset] 出厂预设值
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -63,7 +62,7 @@ def save_local_config(df):
     except Exception as e:
         st.error(f"配置保存失败: {e}")
 
-# Session Initialization (优先读取本地存档)
+# Session Initialization
 if 'master_data' not in st.session_state:
     st.session_state.master_data = load_local_config()
     
@@ -74,12 +73,11 @@ if 'portfolios_data' not in st.session_state:
 # 2. 登录与安全 (Security)
 # ------------------------------------------
 def check_password():
-    """Simple password protection for local studio use."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.1 <small>(Persistence)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.2 <small>(UI Polish)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -274,8 +272,8 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.2", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.2 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -285,7 +283,7 @@ if check_password():
         
         st.sidebar.markdown("---")
         
-        # === 配置中心 (已配置为：默认折叠 + 自动记忆) ===
+        # === 配置中心 ===
         with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
             st.info("💡 系统已启用自动记忆：您在此处的修改会自动保存，下次无需重新输入。")
             
@@ -295,7 +293,7 @@ if check_password():
                 try:
                     df_master_new = pd.read_excel(uploaded_backup, sheet_name='Master_Data')
                     st.session_state.master_data = df_master_new
-                    save_local_config(df_master_new) # 恢复备份时立即持久化
+                    save_local_config(df_master_new) 
                     try:
                         df_port_new = pd.read_excel(uploaded_backup, sheet_name='Portfolios')
                         st.session_state.portfolios_data = df_port_new
@@ -305,7 +303,6 @@ if check_password():
                 except Exception as e:
                     st.error(f"恢复失败: {e}")
 
-            # 自动扫描新产品并添加到配置表
             current_products = st.session_state.master_data['产品名称'].tolist()
             new_products = [p for p in all_cols if p not in current_products and p not in ['沪深300', '日期']]
             if new_products:
@@ -315,18 +312,16 @@ if check_password():
                     row['产品名称'] = p
                     new_rows.append(row)
                 st.session_state.master_data = pd.concat([st.session_state.master_data, pd.DataFrame(new_rows)], ignore_index=True)
-                save_local_config(st.session_state.master_data) # 添加新产品后立即持久化
+                save_local_config(st.session_state.master_data) 
             
-            # 编辑器
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v631"
+                use_container_width=True, hide_index=True, key="master_editor_v632"
             )
-            # 监听修改并保存
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
-                save_local_config(edited_master) # 每次手动修改费率后立即持久化
+                save_local_config(edited_master) 
             
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -395,9 +390,10 @@ if check_password():
             for i, f in enumerate(sel_funds): color_map[f] = colors[i % len(colors)]
 
         st.sidebar.markdown("---")
-        fee_mode_label = "客户实得回报 (实盘费后)"
+        # [Update: Renamed Labels]
+        fee_mode_label = "组合实得回报"
         if sel_funds:
-            fee_mode_label = st.sidebar.radio("展示视角", ("客户实得回报 (实盘费后)", "组合策略表现 (底层净值)", "收益与运作成本分析"), index=0)
+            fee_mode_label = st.sidebar.radio("展示视角", ("组合实得回报", "组合策略表现", "收益与运作成本分析"), index=0)
 
         # ==========================================
         # 计算逻辑执行
@@ -414,10 +410,10 @@ if check_password():
                 # Gross
                 star_rets_gross = (df_port.pct_change().fillna(0) * norm_w).sum(axis=1)
                 star_nav_gross = (1 + star_rets_gross).cumprod()
-                star_nav_gross.name = "组合策略表现 (底层净值)"
+                star_nav_gross.name = "组合策略表现" # [Update: Renamed]
 
                 # Net
-                if fee_mode_label != "组合策略表现 (底层净值)":
+                if fee_mode_label != "组合策略表现":
                     net_funds_df = pd.DataFrame(index=df_port.index)
                     for f in sel_funds:
                         gross_series = df_port[f]
@@ -428,9 +424,9 @@ if check_password():
                     
                     star_rets_net = (net_funds_df.pct_change().fillna(0) * norm_w).sum(axis=1)
                     star_nav_net = (1 + star_rets_net).cumprod()
-                    star_nav_net.name = "寻星配置实得回报"
+                    star_nav_net.name = "组合实得回报" # [Update: Renamed]
 
-                star_nav = star_nav_gross if fee_mode_label == "组合策略表现 (底层净值)" else star_nav_net
+                star_nav = star_nav_gross if fee_mode_label == "组合策略表现" else star_nav_net
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
@@ -459,8 +455,8 @@ if check_password():
                 
                 fig_main = go.Figure()
                 if fee_mode_label == "收益与运作成本分析":
-                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="寻星配置实得回报", line=dict(color='red', width=3)))
-                    fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="策略名义表现 (灰线)", line=dict(color='gray', width=2, dash='dash')))
+                    fig_main.add_trace(go.Scatter(x=star_nav_net.index, y=star_nav_net, name="组合实得回报", line=dict(color='red', width=3)))
+                    fig_main.add_trace(go.Scatter(x=star_nav_gross.index, y=star_nav_gross, name="组合策略表现", line=dict(color='gray', width=2, dash='dash')))
                     loss_amt = star_nav_gross.iloc[-1] - star_nav_net.iloc[-1]
                     loss_pct = 1 - (star_nav_net.iloc[-1] / star_nav_gross.iloc[-1])
                     st.info(f"💡 **成本分析**：在此期间，组合的策略运作与配置服务成本约为 **{loss_amt:.3f}** (费效比 {loss_pct:.2%})。")
@@ -488,7 +484,7 @@ if check_password():
         with tabs[1]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
-                if fee_mode_label == "组合策略表现 (底层净值)": df_attr = df_port
+                if fee_mode_label == "组合策略表现": df_attr = df_port
                 else: df_attr = net_funds_df
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 growth_factors = df_attr.iloc[-1] / df_attr.iloc[0]
@@ -627,4 +623,3 @@ if check_password():
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
-
