@@ -1,4 +1,4 @@
-code_content = """import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -8,23 +8,19 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.5.2 - Final Strict Fix
+# 寻星配置分析系统 v6.3.1 - Core Logic
 # Author: 寻星架构师
-# Update: 
-# 1. [白屏修复] set_page_config 移至顶部
-# 2. [费率逻辑] 移除管理费扣除，保留绝对成本计提
-# 3. [日期补丁] 强力清洗日期索引
+# Context: Web全栈 / 量化金融 / 极度求真
+# Update: 集成费率热更新 + 本地持久化记忆 + 界面优化
 # ==========================================
-
-# [修复1] 必须放在所有其他 st 命令之前，防止白屏！
-st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.5.2", page_icon="🏛️")
 
 # ------------------------------------------
 # 0. 全局常量与预设 (Configuration)
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"  # 本地持久化存储文件
 
-# [Factory Reset] 出厂预设值 (保留完整列表)
+# [Factory Reset] 出厂预设值 (基于最新提供的费率表)
+# 如果本地没有存档，系统将默认加载此列表
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -83,7 +79,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.5.2 <small>(Final Strict)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.1 <small>(Persistence)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -103,34 +99,33 @@ if check_password():
     # 3. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
-    # [修复2] 费率逻辑修正：绝对价格计提，移除管理费扣除循环
+    # [Kernel v2.0] 绝对价格计提
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
-        """
-        Kernel v2.1: 
-        1. 假定输入数据已扣除管理费 (Source is Net of Mgmt Fee)
-        2. 仅计算业绩报酬 (Source is Gross of Perf Fee)
-        3. 计提方式: 绝对成本法 (High Water Mark based on Entry Price)
-        """
         if gross_nav_series.empty: return gross_nav_series
         
         dates = gross_nav_series.index
-        # 既然源数据已扣管理费，直接使用原始值作为资产底座，跳过扣费循环
-        asset_after_mgmt = gross_nav_series.values
+        gross_vals = gross_nav_series.values
         
-        # 锚定买入成本 (First Day NAV)
-        entry_price = asset_after_mgmt[0]
+        entry_price = gross_vals[0] 
+        net_vals = np.zeros(len(gross_vals))
+        net_vals[0] = entry_price 
+        asset_after_mgmt = np.zeros(len(gross_vals))
+        asset_after_mgmt[0] = entry_price
         
-        # 计算浮盈 = 当前资产 - 买入成本
+        prev_date = dates[0]
+        
+        for i in range(1, len(gross_vals)):
+            r_interval = gross_vals[i] / gross_vals[i-1] - 1
+            curr_date = dates[i]
+            days_delta = (curr_date - prev_date).days
+            
+            mgmt_cost = mgmt_fee_rate * (days_delta / 365.0)
+            asset_after_mgmt[i] = asset_after_mgmt[i-1] * (1 + r_interval - mgmt_cost)
+            prev_date = curr_date
+            
         profits = asset_after_mgmt - entry_price
-        
-        # 计提业绩报酬负债 (仅针对盈利部分)
-        # 逻辑：(当前净值 - 成本) * 业绩报酬比例
         liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
-        
-        # 最终净值 = 资产 - 负债
         net_vals = asset_after_mgmt - liabilities
-        
-        # 兜底防御
         net_vals = np.maximum(net_vals, 0)
         
         return pd.Series(net_vals, index=dates)
@@ -279,29 +274,14 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    # [Fix Note] set_page_config has been moved to top. Removed from here.
-    st.sidebar.title("🏛️ 寻星 v6.5.2 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
-        # [修复3] 强力日期读取：修复 2015 年卡死问题
-        try:
-            df_raw = pd.read_excel(uploaded_file, index_col=0)
-            df_raw.index = pd.to_datetime(df_raw.index, errors='coerce') # 强制转标准时间
-            df_raw = df_raw[~df_raw.index.isna()] # 剔除乱码日期
-            df_raw = df_raw.sort_index().ffill() # 排序并填充空值
-            df_raw = df_raw.dropna(how='all', axis=1) # 剔除全空列
-            
-            all_cols = [str(c).strip() for c in df_raw.columns]
-            df_raw.columns = all_cols
-            
-            # 显示成功信息和范围
-            min_d, max_d = df_raw.index.min().date(), df_raw.index.max().date()
-            st.sidebar.success(f"✅ 数据加载成功: {min_d} ~ {max_d}")
-            
-        except Exception as e:
-            st.error(f"数据读取失败，请检查文件格式: {e}")
-            st.stop()
+        df_raw = pd.read_excel(uploaded_file, index_col=0, parse_dates=True).sort_index().ffill()
+        all_cols = [str(c).strip() for c in df_raw.columns]
+        df_raw.columns = all_cols
         
         st.sidebar.markdown("---")
         
@@ -622,7 +602,7 @@ if check_password():
             # CIO Glossary
             st.markdown("---")
             with st.expander("📚 寻星·量化指标权威速查字典 (CIO解读版)", expanded=False):
-                st.markdown(\"\"\"
+                st.markdown("""
                 ### 1. 核心收益指标
                 * **Alpha (α)**：**[能力的体现]** 剔除市场涨跌因素后，基金经理凭选股/择时能力多赚的超额收益。**越高越好**。
                 * **Beta (β)**：**[风格的体现]** 产品对市场波动的敏感度。
@@ -645,11 +625,6 @@ if check_password():
                     * **上行**：市场涨 1% 他涨多少？（希望 > 80%）
                     * **下行**：市场跌 1% 他跌多少？（希望 < 50%）
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
-                \"\"\")
+                """)
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
-"""
 
-with open('xunxing_app_v6_final_strict.py', 'w', encoding='utf-8') as f:
-    f.write(code_content)
-
-print("Code saved to xunxing_app_v6_final_strict.py")
