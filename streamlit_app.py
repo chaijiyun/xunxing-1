@@ -8,18 +8,23 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.5 - Core Logic
+# 寻星配置分析系统 v6.5.2 - Final Strict Fix
 # Author: 寻星架构师
-# Context: Web全栈 / 量化金融 / 极度求真
-# Update: 修复费率逻辑(绝对成本法) + 强力日期读取补丁
+# Update: 
+# 1. [白屏修复] set_page_config 移至顶部
+# 2. [费率逻辑] 移除管理费扣除，保留绝对成本计提
+# 3. [日期补丁] 强力清洗日期索引
 # ==========================================
+
+# [修复1] 必须放在所有其他 st 命令之前，防止白屏！
+st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.5.2", page_icon="🏛️")
 
 # ------------------------------------------
 # 0. 全局常量与预设 (Configuration)
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"  # 本地持久化存储文件
 
-# [Factory Reset] 出厂预设值 (基于最新提供的费率表)
+# [Factory Reset] 出厂预设值 (保留完整列表)
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -47,6 +52,7 @@ DEFAULT_MASTER_ROW = {"年管理费(%)": 0.0, "业绩报酬(%)": 20.0, "开放�
 # 1. 持久化引擎 (Persistence Engine)
 # ------------------------------------------
 def load_local_config():
+    """尝试从本地加载上次保存的配置，如果不存在则使用默认值"""
     if os.path.exists(CONFIG_FILE_PATH):
         try:
             return pd.read_pickle(CONFIG_FILE_PATH)
@@ -55,11 +61,13 @@ def load_local_config():
     return pd.DataFrame(PRESET_MASTER_DEFAULT)
 
 def save_local_config(df):
+    """将当前配置保存到本地"""
     try:
         df.to_pickle(CONFIG_FILE_PATH)
     except Exception as e:
         st.error(f"配置保存失败: {e}")
 
+# Session Initialization (优先读取本地存档)
 if 'master_data' not in st.session_state:
     st.session_state.master_data = load_local_config()
     
@@ -70,11 +78,12 @@ if 'portfolios_data' not in st.session_state:
 # 2. 登录与安全 (Security)
 # ------------------------------------------
 def check_password():
+    """Simple password protection for local studio use."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.5 <small>(Final Logic)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.5.2 <small>(Final Strict)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -94,28 +103,34 @@ if check_password():
     # 3. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
-    # [Kernel v2.1] 绝对价格计提 (适配“已扣管理费”源数据)
+    # [修复2] 费率逻辑修正：绝对价格计提，移除管理费扣除循环
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
+        """
+        Kernel v2.1: 
+        1. 假定输入数据已扣除管理费 (Source is Net of Mgmt Fee)
+        2. 仅计算业绩报酬 (Source is Gross of Perf Fee)
+        3. 计提方式: 绝对成本法 (High Water Mark based on Entry Price)
+        """
         if gross_nav_series.empty: return gross_nav_series
         
         dates = gross_nav_series.index
-        # 核心修正：源数据已扣管理费，直接取值作为资产底座，不再执行扣费循环
+        # 既然源数据已扣管理费，直接使用原始值作为资产底座，跳过扣费循环
         asset_after_mgmt = gross_nav_series.values
         
-        # 锚定买入成本 (切片的第一天净值)
+        # 锚定买入成本 (First Day NAV)
         entry_price = asset_after_mgmt[0]
         
-        # 计算利润 = 当前净值 - 买入成本
+        # 计算浮盈 = 当前资产 - 买入成本
         profits = asset_after_mgmt - entry_price
         
-        # 计提业绩报酬负债 (只在盈利时计提)
+        # 计提业绩报酬负债 (仅针对盈利部分)
         # 逻辑：(当前净值 - 成本) * 业绩报酬比例
         liabilities = np.where(profits > 0, profits * perf_fee_rate, 0.0)
         
-        # 最终净值 = (自带扣费的原始净值) - 业绩报酬负债
+        # 最终净值 = 资产 - 负债
         net_vals = asset_after_mgmt - liabilities
         
-        # 兜底防止出现负数
+        # 兜底防御
         net_vals = np.maximum(net_vals, 0)
         
         return pd.Series(net_vals, index=dates)
@@ -264,12 +279,12 @@ if check_password():
     # ------------------------------------------
     # 4. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.5", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.5 · 驾驶舱")
+    # [Fix Note] set_page_config has been moved to top. Removed from here.
+    st.sidebar.title("🏛️ 寻星 v6.5.2 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
-        # [核心补丁] 强力日期读取：修复 2015 年卡死问题
+        # [修复3] 强力日期读取：修复 2015 年卡死问题
         try:
             df_raw = pd.read_excel(uploaded_file, index_col=0)
             df_raw.index = pd.to_datetime(df_raw.index, errors='coerce') # 强制转标准时间
@@ -279,6 +294,11 @@ if check_password():
             
             all_cols = [str(c).strip() for c in df_raw.columns]
             df_raw.columns = all_cols
+            
+            # 显示成功信息和范围
+            min_d, max_d = df_raw.index.min().date(), df_raw.index.max().date()
+            st.sidebar.success(f"✅ 数据加载成功: {min_d} ~ {max_d}")
+            
         except Exception as e:
             st.error(f"数据读取失败，请检查文件格式: {e}")
             st.stop()
@@ -629,8 +649,7 @@ if check_password():
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
 """
 
-with open('xunxing_app_v6_final.py', 'w', encoding='utf-8') as f:
+with open('xunxing_app_v6_final_strict.py', 'w', encoding='utf-8') as f:
     f.write(code_content)
 
-print("Code saved to xunxing_app_v6_final.py")
-
+print("Code saved to xunxing_app_v6_final_strict.py")
