@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.4 - Strategy Grouping
+# 寻星配置分析系统 v6.3.5 - UI Rename
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 增加策略标签二级分类选择器
+# Update: 优化侧边栏配置项命名
 # ==========================================
 
 # ------------------------------------------
@@ -19,7 +19,7 @@ from datetime import datetime
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"  # 本地持久化存储文件
 
-# [Factory Reset] 出厂预设值 (增加了 '策略标签')
+# [Factory Reset] 出厂预设值
 PRESET_MASTER_DEFAULT = [
     {'产品名称': '国富瑞合1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
     {'产品名称': '合骥500对冲A期', '策略标签': '量化对冲', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
@@ -74,7 +74,7 @@ if 'portfolios_data' not in st.session_state:
     st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
 
 # ------------------------------------------
-# 2. UI 组件封装 (New UI Component)
+# 2. UI 组件封装 (UI Component)
 # ------------------------------------------
 def render_grouped_selector(label, options, master_df, key_prefix, default_selections=None):
     """
@@ -85,7 +85,6 @@ def render_grouped_selector(label, options, master_df, key_prefix, default_selec
     # 1. 数据准备
     strategy_map = {}
     for p in options:
-        # 容错查询：如果找不到产品或没有标签列，归为未分类
         if '策略标签' in master_df.columns:
             info = master_df[master_df['产品名称'] == p]
             tag = info.iloc[0]['策略标签'] if not info.empty else "未分类"
@@ -106,8 +105,6 @@ def render_grouped_selector(label, options, master_df, key_prefix, default_selec
         funds_in_group = strategy_map[strat]
         default_in_group = [f for f in funds_in_group if f in default_selections]
         
-        # 动态计算是否展开：如果该组内有默认选中的，建议展开，否则折叠
-        # 这里为了保持界面整洁，默认全部折叠 (expanded=False)
         with st.expander(f"📂 {strat} ({len(funds_in_group)}支)", expanded=False):
             selected = st.multiselect(
                 f"选择 {strat}", 
@@ -128,7 +125,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.4 <small>(Strategy Grouping)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.5 <small>(UI Rename)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -323,8 +320,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.4", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.4 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.5", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.5 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -335,7 +332,8 @@ if check_password():
         st.sidebar.markdown("---")
         
         # === 配置中心 ===
-        with st.sidebar.expander("⚙️ 系统配置中心 (费率/组合/备份)", expanded=False):
+        # [Update: Renamed Expander]
+        with st.sidebar.expander("⚙️ 寻星配置参数", expanded=False):
             st.info("💡 系统已启用自动记忆：您在此处的修改会自动保存，下次无需重新输入。")
             
             col_bk1, col_bk2 = st.columns(2)
@@ -365,7 +363,6 @@ if check_password():
                 st.session_state.master_data = pd.concat([st.session_state.master_data, pd.DataFrame(new_rows)], ignore_index=True)
                 save_local_config(st.session_state.master_data) 
             
-            # [Update] 编辑器增加了策略标签列的显示
             edited_master = st.data_editor(
                 st.session_state.master_data,
                 column_config={
@@ -383,8 +380,9 @@ if check_password():
                 st.session_state.master_data.to_excel(writer, sheet_name='Master_Data', index=False)
                 st.session_state.portfolios_data.to_excel(writer, sheet_name='Portfolios', index=False)
             
+            # [Update: Renamed Download Button]
             st.download_button(
-                label="💾 下载全量数据备份 (.xlsx)",
+                label="💾 下载寻星配置参数 (.xlsx)",
                 data=buffer,
                 file_name="寻星_全量系统备份.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -411,7 +409,6 @@ if check_password():
             available_funds = [c for c in all_cols if c != sel_bench]
             available_funds.sort()
             
-            # [Update] 侧边栏使用分组选择器
             with st.sidebar:
                 sel_funds = render_grouped_selector(
                     "挑选成分基金 (按策略)", 
@@ -512,7 +509,6 @@ if check_password():
             pool_options = [c for c in all_cols if c != sel_bench]
             pool_options.sort()
             
-            # [Update] Tab 0 使用分组选择器
             compare_pool = render_grouped_selector(
                 "搜索池内产品 (按策略)", 
                 pool_options, 
