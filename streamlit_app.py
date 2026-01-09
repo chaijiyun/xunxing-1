@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.5 - UI Rename
+# 寻星配置分析系统 v6.3.6 - Visual & Core Update
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 优化侧边栏配置项命名
+# Update: UI颜色锚定 (Blue Benchmark / Custom Heatmap)
 # ==========================================
 
 # ------------------------------------------
@@ -125,7 +125,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.5 <small>(UI Rename)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.6 <small>(Pro)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -320,8 +320,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.5", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.5 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.6", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.6 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -332,7 +332,6 @@ if check_password():
         st.sidebar.markdown("---")
         
         # === 配置中心 ===
-        # [Update: Renamed Expander]
         with st.sidebar.expander("⚙️ 寻星配置参数", expanded=False):
             st.info("💡 系统已启用自动记忆：您在此处的修改会自动保存，下次无需重新输入。")
             
@@ -369,7 +368,7 @@ if check_password():
                     "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                     "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
                 },
-                use_container_width=True, hide_index=True, key="master_editor_v634"
+                use_container_width=True, hide_index=True, key="master_editor_v636"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -380,7 +379,6 @@ if check_password():
                 st.session_state.master_data.to_excel(writer, sheet_name='Master_Data', index=False)
                 st.session_state.portfolios_data.to_excel(writer, sheet_name='Portfolios', index=False)
             
-            # [Update: Renamed Download Button]
             st.download_button(
                 label="💾 下载寻星配置参数 (.xlsx)",
                 data=buffer,
@@ -538,6 +536,15 @@ if check_password():
                         if col in df_comp.columns:
                             s = df_comp[col].dropna()
                             if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
+                    
+                    # [Visual Update] Tab 1 Benchmark also Blue
+                    # Add benchmark to Tab 1 for reference if data exists
+                    if sel_bench in df_db.columns:
+                        s_bench = df_db[sel_bench].reindex(df_comp.index).ffill()
+                        if not s_bench.empty:
+                            s_bench = s_bench / s_bench.iloc[0]
+                            fig_p.add_trace(go.Scatter(x=s_bench.index, y=s_bench, name=f"基准: {sel_bench}", line=dict(color='#1890FF', width=2, dash='solid'), opacity=0.8))
+
                     st.plotly_chart(fig_p.update_layout(title=f"业绩对比 ({comp_fee_mode})", template="plotly_white", height=500), use_container_width=True)
                     
                     res_data = []
@@ -631,7 +638,14 @@ if check_password():
                 else:
                     fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 
-                fig_main.add_trace(go.Scatter(x=bn_norm.index, y=bn_norm, name=f"基准: {sel_bench}", line=dict(color='#1F2937', width=2, dash='solid'), opacity=0.6))
+                # [Visual Update] Tab 2 Benchmark -> Institutional Blue
+                fig_main.add_trace(go.Scatter(
+                    x=bn_norm.index, 
+                    y=bn_norm, 
+                    name=f"基准: {sel_bench}", 
+                    line=dict(color='#1890FF', width=2, dash='solid'), # <--- Modified: Blue
+                    opacity=0.8
+                ))
                 fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
                 st.plotly_chart(fig_main, use_container_width=True)
 
@@ -690,6 +704,24 @@ if check_password():
                     fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
-                st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale='RdBu_r', zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
+                # [Visual Update] Tab 3 Heatmap -> Blue(Hedge)-White-Red(Risk)
+                # Define Custom Color Scale
+                custom_scale = [
+                    [0.0, '#1890FF'], # -1.0 Blue (Strong Hedge)
+                    [0.5, '#FFFFFF'], # 0.0 White (Uncorrelated)
+                    [1.0, '#D0021B']  # 1.0 Red (Risk Concentration)
+                ]
+                st.plotly_chart(
+                    px.imshow(
+                        df_sub_rets.corr(), 
+                        text_auto=".2f", 
+                        color_continuous_scale=custom_scale, # <--- Modified
+                        zmin=-1, 
+                        zmax=1, 
+                        title="产品相关性矩阵 (Pearson)", 
+                        height=600
+                    ), 
+                    use_container_width=True
+                )
 
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
