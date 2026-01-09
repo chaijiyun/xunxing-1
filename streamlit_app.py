@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.3 - Tab Reordered
+# 寻星配置分析系统 v6.3.4 - Strategy Grouping
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 将“配置池产品分析”调整为首屏展示
+# Update: 增加策略标签二级分类选择器
 # ==========================================
 
 # ------------------------------------------
@@ -19,29 +19,29 @@ from datetime import datetime
 # ------------------------------------------
 CONFIG_FILE_PATH = "xunxing_config.pkl"  # 本地持久化存储文件
 
-# [Factory Reset] 出厂预设值
+# [Factory Reset] 出厂预设值 (增加了 '策略标签')
 PRESET_MASTER_DEFAULT = [
-    {'产品名称': '国富瑞合1号', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '合骥500对冲A期', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '合绎期权套利', '年管理费(%)': 0, '业绩报酬(%)': 30, '开放频率': '月度', '锁定期(月)': 6, '赎回效率(T+n)': 4},
-    {'产品名称': '玖鹏宏图1号', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '开思沪港深优选', '年管理费(%)': 0, '业绩报酬(%)': 17, '开放频率': '月度', '锁定期(月)': 1, '赎回效率(T+n)': 4},
-    {'产品名称': '宽远优势成长10号', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '蓝墨长河1号', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 1, '赎回效率(T+n)': 4},
-    {'产品名称': '宁泉特定策略1号', '年管理费(%)': 0, '业绩报酬(%)': 15, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
-    {'产品名称': '平方和1000指数增强', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '平方和多策略', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '平方和量化选股', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '平方和市场中性', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '秦川1号', '年管理费(%)': 0, '业绩报酬(%)': 15, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
-    {'产品名称': '睿郡节节高11号', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 6, '赎回效率(T+n)': 4},
-    {'产品名称': '孝庸1000指增', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
-    {'产品名称': '孝庸500指增', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
-    {'产品名称': '孝庸中性+cta', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
-    {'产品名称': '孝庸中性策略', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
-    {'产品名称': '孝庸量选', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '国富瑞合1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '合骥500对冲A期', '策略标签': '量化对冲', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '合绎期权套利', '策略标签': '期权套利', '年管理费(%)': 0, '业绩报酬(%)': 30, '开放频率': '月度', '锁定期(月)': 6, '赎回效率(T+n)': 4},
+    {'产品名称': '玖鹏宏图1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '开思沪港深优选', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 17, '开放频率': '月度', '锁定期(月)': 1, '赎回效率(T+n)': 4},
+    {'产品名称': '宽远优势成长10号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '蓝墨长河1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 1, '赎回效率(T+n)': 4},
+    {'产品名称': '宁泉特定策略1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 15, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '平方和1000指数增强', '策略标签': '量化指增', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '平方和多策略', '策略标签': '多策略', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '平方和量化选股', '策略标签': '量化选股', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '平方和市场中性', '策略标签': '量化对冲', '年管理费(%)': 0, '业绩报酬(%)': 16, '开放频率': '月度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '秦川1号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 15, '开放频率': '周度', '锁定期(月)': 3, '赎回效率(T+n)': 4},
+    {'产品名称': '睿郡节节高11号', '策略标签': '主观多头', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 6, '赎回效率(T+n)': 4},
+    {'产品名称': '孝庸1000指增', '策略标签': '量化指增', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '孝庸500指增', '策略标签': '量化指增', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '月度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '孝庸中性+cta', '策略标签': '多策略', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '孝庸中性策略', '策略标签': '量化对冲', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
+    {'产品名称': '孝庸量选', '策略标签': '量化选股', '年管理费(%)': 0, '业绩报酬(%)': 20, '开放频率': '周度', '锁定期(月)': 12, '赎回效率(T+n)': 4},
 ]
-DEFAULT_MASTER_ROW = {"年管理费(%)": 0.0, "业绩报酬(%)": 20.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5}
+DEFAULT_MASTER_ROW = {"策略标签": "未分类", "年管理费(%)": 0.0, "业绩报酬(%)": 20.0, "开放频率": "月度", "锁定期(月)": 6, "赎回效率(T+n)": 5}
 
 # ------------------------------------------
 # 1. 持久化引擎 (Persistence Engine)
@@ -50,7 +50,11 @@ def load_local_config():
     """尝试从本地加载上次保存的配置，如果不存在则使用默认值"""
     if os.path.exists(CONFIG_FILE_PATH):
         try:
-            return pd.read_pickle(CONFIG_FILE_PATH)
+            df = pd.read_pickle(CONFIG_FILE_PATH)
+            # [Hotfix] 数据热补丁：如果旧存档没有策略标签，自动补齐
+            if '策略标签' not in df.columns:
+                df.insert(1, '策略标签', '未分类')
+            return df
         except Exception:
             return pd.DataFrame(PRESET_MASTER_DEFAULT)
     return pd.DataFrame(PRESET_MASTER_DEFAULT)
@@ -70,14 +74,61 @@ if 'portfolios_data' not in st.session_state:
     st.session_state.portfolios_data = pd.DataFrame(columns=['组合名称', '产品名称', '权重'])
 
 # ------------------------------------------
-# 2. 登录与安全 (Security)
+# 2. UI 组件封装 (New UI Component)
+# ------------------------------------------
+def render_grouped_selector(label, options, master_df, key_prefix, default_selections=None):
+    """
+    通用组件：根据 master_data 中的策略标签，生成分组折叠选择器
+    """
+    if default_selections is None: default_selections = []
+    
+    # 1. 数据准备
+    strategy_map = {}
+    for p in options:
+        # 容错查询：如果找不到产品或没有标签列，归为未分类
+        if '策略标签' in master_df.columns:
+            info = master_df[master_df['产品名称'] == p]
+            tag = info.iloc[0]['策略标签'] if not info.empty else "未分类"
+        else:
+            tag = "未分类"
+        
+        if pd.isna(tag): tag = "未分类"
+        if tag not in strategy_map: strategy_map[tag] = []
+        strategy_map[tag].append(p)
+    
+    sorted_strategies = sorted(strategy_map.keys(), key=lambda x: (x == "未分类", x))
+    
+    # 2. 渲染 UI
+    final_selection = []
+    st.markdown(f"**{label}**")
+    
+    for strat in sorted_strategies:
+        funds_in_group = strategy_map[strat]
+        default_in_group = [f for f in funds_in_group if f in default_selections]
+        
+        # 动态计算是否展开：如果该组内有默认选中的，建议展开，否则折叠
+        # 这里为了保持界面整洁，默认全部折叠 (expanded=False)
+        with st.expander(f"📂 {strat} ({len(funds_in_group)}支)", expanded=False):
+            selected = st.multiselect(
+                f"选择 {strat}", 
+                options=funds_in_group, 
+                default=default_in_group,
+                key=f"{key_prefix}_{strat}",
+                label_visibility="collapsed"
+            )
+            final_selection.extend(selected)
+            
+    return final_selection
+
+# ------------------------------------------
+# 3. 登录与安全 (Security)
 # ------------------------------------------
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.3 <small>(Tab Reorder)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.4 <small>(Strategy Grouping)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -94,7 +145,7 @@ def check_password():
 
 if check_password():
     # ------------------------------------------
-    # 3. 核心计算引擎 (Calculation Engine)
+    # 4. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
     # [Kernel v2.0] 绝对价格计提
@@ -270,10 +321,10 @@ if check_password():
         return weighted_lockup, worst_lockup, liquidity_notes
 
     # ------------------------------------------
-    # 4. UI 界面与交互 (Interface)
+    # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.3", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.3 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.4", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.3.4 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -314,10 +365,14 @@ if check_password():
                 st.session_state.master_data = pd.concat([st.session_state.master_data, pd.DataFrame(new_rows)], ignore_index=True)
                 save_local_config(st.session_state.master_data) 
             
+            # [Update] 编辑器增加了策略标签列的显示
             edited_master = st.data_editor(
                 st.session_state.master_data,
-                column_config={"开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])},
-                use_container_width=True, hide_index=True, key="master_editor_v632"
+                column_config={
+                    "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
+                    "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
+                },
+                use_container_width=True, hide_index=True, key="master_editor_v634"
             )
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -355,7 +410,16 @@ if check_password():
         if selected_mode == "🛠️ 自定义/新建":
             available_funds = [c for c in all_cols if c != sel_bench]
             available_funds.sort()
-            sel_funds = st.sidebar.multiselect("挑选成分基金", available_funds)
+            
+            # [Update] 侧边栏使用分组选择器
+            with st.sidebar:
+                sel_funds = render_grouped_selector(
+                    "挑选成分基金 (按策略)", 
+                    available_funds, 
+                    st.session_state.master_data, 
+                    key_prefix="sidebar_select"
+                )
+            
             if sel_funds:
                 st.sidebar.markdown("#### ⚖️ 权重")
                 avg_w = 1.0 / len(sel_funds)
@@ -432,14 +496,13 @@ if check_password():
         # ==========================================
         # 可视化 (Visualization)
         # ==========================================
-        # [Update: Tab Order Changed]
         tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析"])
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
             avg_lock, worst_lock, lock_notes = calculate_liquidity_risk(weights, st.session_state.master_data)
 
-        # === 1. 配置池产品分析 (Originally Tab 3, Now Tab 0) ===
+        # === 1. 配置池产品分析 ===
         with tabs[0]:
             c_t1, c_t2 = st.columns([3, 1])
             with c_t1: st.subheader("⚔️ 配置池产品分析")
@@ -448,7 +511,14 @@ if check_password():
 
             pool_options = [c for c in all_cols if c != sel_bench]
             pool_options.sort()
-            compare_pool = st.multiselect("搜索池内产品", pool_options, default=[])
+            
+            # [Update] Tab 0 使用分组选择器
+            compare_pool = render_grouped_selector(
+                "搜索池内产品 (按策略)", 
+                pool_options, 
+                st.session_state.master_data, 
+                key_prefix="pool_select"
+            )
             
             if compare_pool:
                 is_aligned = st.checkbox("对齐起始日期比较", value=False)
@@ -540,7 +610,7 @@ if check_password():
                     * **完美形态**：上行 > 100% 且 下行 < 50%（极其稀缺）。
                 """)
 
-        # === 2. 组合全景图 (Originally Tab 1, Now Tab 1) ===
+        # === 2. 组合全景图 ===
         with tabs[1]:
             if star_nav is not None:
                 st.subheader(f"📊 {star_nav.name}")
@@ -583,7 +653,7 @@ if check_password():
 
             else: st.info("👈 请在左侧选择或加载组合。")
 
-        # === 3. 穿透归因分析 (Originally Tab 2, Now Tab 2) ===
+        # === 3. 穿透归因分析 ===
         with tabs[2]:
             if sel_funds:
                 st.subheader("🔍 寻星配置穿透归因分析")
