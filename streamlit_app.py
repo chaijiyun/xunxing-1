@@ -8,15 +8,13 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.6.1 (Stable - Cash Fill)
+# 寻星配置分析系统 v6.7.0 (Dual-Track Logic)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
 # Update: 
-#   1. [Core Logic] 引入 "Cash Filling" (现金填充) 机制：
-#      对于中途成立的基金，将其成立前的净值视为“现金持有”，
-#      强制回填为成立日的净值 (即收益率为0%)。
-#      这完美解决了 Tab 3 数据缺失问题，且符合“未投入即现金”的业务逻辑。
-#   2. [UI] 保持全站百分比格式。
+#   1. [Tab 3 重构] 实施“数据分流”：
+#      - 贡献归因/相关性：继续使用 Cash-Filled 数据 (反映组合真实持有体验)。
+#      - 能力雷达/走势对比：切换回 Raw Data (反映基金真实运作能力，不被空窗期拉低)。
 # ==========================================
 
 # ------------------------------------------
@@ -98,7 +96,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.6.1 <small>(Cash Fill)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.7.0 <small>(Dual-Track)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -305,8 +303,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.6.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.6.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.7.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.7.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -344,7 +342,7 @@ if check_password():
             edited_master = st.data_editor(st.session_state.master_data, column_config={
                 "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                 "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
-            }, use_container_width=True, hide_index=True, key="master_editor_v661")
+            }, use_container_width=True, hide_index=True, key="master_editor_v670")
             
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -409,7 +407,7 @@ if check_password():
         star_nav = None; star_nav_gross = None; star_nav_net = None
 
         if sel_funds and not df_db.empty:
-            df_port = df_db[sel_funds].ffill().dropna(how='all') # 只要有一个基金有净值就保留日期
+            df_port = df_db[sel_funds].ffill().dropna(how='all') 
             
             if not df_port.empty:
                 norm_w = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
@@ -424,13 +422,9 @@ if check_password():
                 for f in sel_funds:
                     s_raw = df_db[f].dropna()
                     if s_raw.empty: continue
-                    # [Core Logic Fix v6.6.1] Cash Filling
-                    # 1. 对齐到组合的完整时间段
+                    # [Core Logic: Cash Filling for Portfolio]
                     s_segment = s_raw.reindex(df_port.index)
-                    # 2. bfill: 用第一天成立的净值反向填充前面的空洞 (假设成立前就是这个价格，即收益率为0)
-                    s_segment = s_segment.fillna(method='bfill')
-                    # 3. 如果最前面还是空（比如整个区间都没成立），则填1.0
-                    s_segment = s_segment.fillna(1.0)
+                    s_segment = s_segment.fillna(method='bfill').fillna(1.0)
                     
                     info = MASTER_DICT.get(f, DEFAULT_MASTER_ROW)
                     mgmt = info.get('年管理费(%)', 0) / 100.0
@@ -561,15 +555,12 @@ if check_password():
                 if fee_mode_label == "组合策略表现": df_attr = df_port
                 else: df_attr = net_funds_df
                 
-                # [Core Logic v6.6.1] 归因计算使用填充后的数据 (Cash Filled)
-                # 因为已经没有 NaN 了，所以可以直接 iloc[0]
+                # [Core Logic: Contribution View uses Cash Filled Data]
                 growth_factors = pd.Series(index=df_attr.columns, dtype=float)
                 for col in df_attr.columns:
-                    s = df_attr[col] # 这里已经填满了
-                    if not s.empty:
-                        growth_factors[col] = s.iloc[-1] / s.iloc[0]
-                    else:
-                        growth_factors[col] = 1.0 
+                    s = df_attr[col]
+                    if not s.empty: growth_factors[col] = s.iloc[-1] / s.iloc[0]
+                    else: growth_factors[col] = 1.0 
 
                 initial_w_series = pd.Series(weights) / (sum(weights.values()) if sum(weights.values()) > 0 else 1)
                 latest_values = initial_w_series * growth_factors
@@ -591,20 +582,33 @@ if check_password():
                     st.markdown("#### 🌊 动态攻守能力分析 (Dynamic Capture Analysis)")
                     
                     st.markdown("##### 1. 分时段攻守能力雷达 (Static Period Radar)")
-                    capture_rows = []
-                    capture_rows.append(calculate_capture_stats(star_nav, bn_sync, "全历史 (All-time)"))
-                    if len(star_nav) > 252: capture_rows.append(calculate_capture_stats(star_nav.iloc[-252:], bn_sync.iloc[-252:], "近1年 (L1Y)"))
-                    if len(star_nav) > 126: capture_rows.append(calculate_capture_stats(star_nav.iloc[-126:], bn_sync.iloc[-126:], "近半年 (L6M)"))
+                    st.info("💡 **架构师注**：以下指标基于各基金**实际成立/存续区间**计算，已剔除未投入期的现金拖累，还原真实策略能力。")
                     
-                    if capture_rows:
-                        df_cap_static = pd.DataFrame(capture_rows)
-                        st.dataframe(
-                            df_cap_static.style.format({
-                                "上行捕获": "{:.2%}", 
-                                "下行捕获": "{:.2%}"
-                            }), 
-                            use_container_width=True
-                        )
+                    # [Dual-Track: Asset Analysis View uses Raw Data]
+                    metrics_list = []
+                    for col in sel_funds:
+                        s_raw = df_db[col].dropna()
+                        if s_raw.empty: continue
+                        b_raw = df_db[sel_bench].reindex(s_raw.index).dropna()
+                        common_idx = s_raw.index.intersection(b_raw.index)
+                        s_final = s_raw.loc[common_idx]
+                        b_final = b_raw.loc[common_idx]
+                        if len(s_final) < 10: continue
+                        
+                        cap_stats = calculate_capture_stats(s_final, b_final, "全周期")
+                        m_real = calculate_metrics(s_final, b_final)
+                        
+                        metrics_list.append({
+                            "产品名称": col,
+                            "存续时长": f"{(s_final.index[-1] - s_final.index[0]).days}天",
+                            "真实年化": f"{m_real['年化收益']:.2%}",
+                            "真实夏普": f"{m_real['夏普比率']:.2f}",
+                            "上行捕获": f"{cap_stats['上行捕获']:.2%}",
+                            "下行捕获": f"{cap_stats['下行捕获']:.2%}",
+                            "CIO点评": cap_stats['CIO点评']
+                        })
+                    if metrics_list:
+                        st.dataframe(pd.DataFrame(metrics_list).set_index("产品名称"), use_container_width=True)
 
                     st.markdown("##### 2. 滚动捕获率趋势 (Rolling Trend)")
                     fig_cap = go.Figure()
@@ -614,16 +618,15 @@ if check_password():
                     fig_cap.update_layout(template="plotly_white", height=400, hovermode="x unified", yaxis=dict(title="捕获率 (Capture Ratio)", tickformat=".2f"))
                     st.plotly_chart(fig_cap, use_container_width=True)
 
+                # [Dual-Track: Risk/Return Contribution uses Cash Filled]
                 df_sub_rets = df_attr.pct_change().fillna(0) 
                 risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) 
                 
                 contribution_vals = pd.Series(index=df_attr.columns, dtype=float)
                 for col in df_attr.columns:
                     s = df_attr[col]
-                    if not s.empty:
-                        contribution_vals[col] = (s.iloc[-1] / s.iloc[0]) - 1
-                    else:
-                        contribution_vals[col] = 0.0
+                    if not s.empty: contribution_vals[col] = (s.iloc[-1] / s.iloc[0]) - 1
+                    else: contribution_vals[col] = 0.0
                 contribution_vals = initial_w_series * contribution_vals
 
                 col_attr1, col_attr2 = st.columns(2)
@@ -631,13 +634,15 @@ if check_password():
                 col_attr2.plotly_chart(px.pie(names=contribution_vals.index, values=contribution_vals.abs(), hole=0.4, title="收益贡献归因", color=contribution_vals.index, color_discrete_map=color_map), use_container_width=True)
 
                 st.markdown("---")
-                st.markdown("#### 底层产品走势对比")
-                # [Core Logic v6.6.1] 现在有了Cash Fill，所有产品都从起点开始了
+                st.markdown("#### 底层产品走势对比 (独立归一化)")
                 fig_sub_compare = go.Figure()
-                for col in df_attr.columns:
-                    s = df_attr[col]
-                    if not s.empty:
-                        s_norm = s / s.iloc[0] 
+                # [Dual-Track: Line Chart uses Raw Data for Independent Normalization]
+                for col in sel_funds:
+                    s_raw = df_db[col].dropna()
+                    # Filter to user selected range to keep X-axis consistent
+                    s_raw = s_raw.loc[s_raw.index >= df_db.index[0]] 
+                    if not s_raw.empty:
+                        s_norm = s_raw / s_raw.iloc[0] 
                         fig_sub_compare.add_trace(go.Scatter(x=s_norm.index, y=s_norm, name=col, opacity=0.6, line=dict(color=color_map.get(col))))
                 
                 if star_nav is not None:
