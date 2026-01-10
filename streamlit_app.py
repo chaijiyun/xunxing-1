@@ -8,13 +8,13 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.7.0 (Dual-Track Logic)
+# 寻星配置分析系统 v6.8.0 (Enriched Analytics)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
 # Update: 
-#   1. [Tab 3 重构] 实施“数据分流”：
-#      - 贡献归因/相关性：继续使用 Cash-Filled 数据 (反映组合真实持有体验)。
-#      - 能力雷达/走势对比：切换回 Raw Data (反映基金真实运作能力，不被空窗期拉低)。
+#   1. [Tab 3] 深度体检增加：卡玛、索提诺、最大回撤、日胜率
+#   2. [Tab 1] 优化指标展示顺序，确保上下行捕获率显眼且格式统一
+#   3. [System] 保持双轨制计算逻辑 (Dual-Track)
 # ==========================================
 
 # ------------------------------------------
@@ -96,7 +96,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.7.0 <small>(Dual-Track)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.8.0 <small>(Enriched)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -303,8 +303,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.7.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.7.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.8.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.8.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -342,7 +342,7 @@ if check_password():
             edited_master = st.data_editor(st.session_state.master_data, column_config={
                 "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                 "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
-            }, use_container_width=True, hide_index=True, key="master_editor_v670")
+            }, use_container_width=True, hide_index=True, key="master_editor_v680")
             
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -490,7 +490,10 @@ if check_password():
                                 res_data.append({
                                     "产品名称": col, 
                                     "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}",
-                                    "夏普": round(k['夏普比率'], 2), "盈亏比": f"{k['盈亏比']:.2f}", "胜率": f"{k['正收益概率(日)']:.1%}",
+                                    "卡玛": f"{k['卡玛比率']:.2f}", # New
+                                    "夏普": f"{k['夏普比率']:.2f}",
+                                    "索提诺": f"{k['索提诺比率']:.2f}", # New
+                                    "胜率": f"{k['正收益概率(日)']:.1%}",
                                     "VaR(95%)": f"{k['VaR(95%)']:.2%}",
                                     "上行捕获": f"{k['上行捕获']:.2%}", "下行捕获": f"{k['下行捕获']:.2%}",
                                     "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"
@@ -510,7 +513,7 @@ if check_password():
                         df_yearly = pd.DataFrame(yearly_data).T
                         st.dataframe(df_yearly[sorted(df_yearly.columns)].style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
-            st.markdown("---"); st.info("📚 寻星·量化指标说明：已全站统一为百分比格式。")
+            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，并新增卡玛/索提诺指标。")
 
         # === Tab 2 ===
         with tabs[1]:
@@ -582,7 +585,7 @@ if check_password():
                     st.markdown("#### 🌊 动态攻守能力分析 (Dynamic Capture Analysis)")
                     
                     st.markdown("##### 1. 分时段攻守能力雷达 (Static Period Radar)")
-                    st.info("💡 **架构师注**：以下指标基于各基金**实际成立/存续区间**计算，已剔除未投入期的现金拖累，还原真实策略能力。")
+                    st.info("💡 **架构师注**：以下指标基于各基金**实际成立/存续区间**计算 (Raw Data)，已剔除未投入期的现金拖累。")
                     
                     # [Dual-Track: Asset Analysis View uses Raw Data]
                     metrics_list = []
@@ -598,13 +601,18 @@ if check_password():
                         cap_stats = calculate_capture_stats(s_final, b_final, "全周期")
                         m_real = calculate_metrics(s_final, b_final)
                         
+                        # [Feature Upgrade v6.8.0] Enriched Metrics
                         metrics_list.append({
                             "产品名称": col,
                             "存续时长": f"{(s_final.index[-1] - s_final.index[0]).days}天",
-                            "真实年化": f"{m_real['年化收益']:.2%}",
-                            "真实夏普": f"{m_real['夏普比率']:.2f}",
+                            "年化收益": f"{m_real['年化收益']:.2%}",
+                            "最大回撤": f"{m_real['最大回撤']:.2%}", # New
+                            "卡玛比率": f"{m_real['卡玛比率']:.2f}", # New
+                            "夏普比率": f"{m_real['夏普比率']:.2f}",
+                            "索提诺": f"{m_real['索提诺比率']:.2f}", # New
                             "上行捕获": f"{cap_stats['上行捕获']:.2%}",
                             "下行捕获": f"{cap_stats['下行捕获']:.2%}",
+                            "胜率": f"{m_real['正收益概率(日)']:.1%}", # New
                             "CIO点评": cap_stats['CIO点评']
                         })
                     if metrics_list:
