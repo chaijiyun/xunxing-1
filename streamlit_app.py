@@ -8,13 +8,12 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.8.0 (Enriched Analytics)
+# 寻星配置分析系统 v6.9.0 (Full-Spectrum Analytics)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
 # Update: 
-#   1. [Tab 3] 深度体检增加：卡玛、索提诺、最大回撤、日胜率
-#   2. [Tab 1] 优化指标展示顺序，确保上下行捕获率显眼且格式统一
-#   3. [System] 保持双轨制计算逻辑 (Dual-Track)
+#   1. [Tab 1] 横向对比表新增 "近1年" & "近半年" 上下行捕获率，形成时间维度的风格漂移监控。
+#   2. [Core] 保持双轨制计算逻辑，Tab 1 采用 Raw Data 切片以保证指标纯净度。
 # ==========================================
 
 # ------------------------------------------
@@ -96,7 +95,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.8.0 <small>(Enriched)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.9.0 <small>(Full-Spectrum)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -303,8 +302,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.8.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.8.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.9.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.9.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -342,7 +341,7 @@ if check_password():
             edited_master = st.data_editor(st.session_state.master_data, column_config={
                 "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                 "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
-            }, use_container_width=True, hide_index=True, key="master_editor_v680")
+            }, use_container_width=True, hide_index=True, key="master_editor_v690")
             
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -485,19 +484,41 @@ if check_password():
                     res_data = []
                     for col in compare_pool:
                         if col in df_comp.columns:
-                            k = calculate_metrics(df_comp[col], df_db[sel_bench]) 
-                            if k: 
-                                res_data.append({
-                                    "产品名称": col, 
-                                    "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}",
-                                    "卡玛": f"{k['卡玛比率']:.2f}", # New
-                                    "夏普": f"{k['夏普比率']:.2f}",
-                                    "索提诺": f"{k['索提诺比率']:.2f}", # New
-                                    "胜率": f"{k['正收益概率(日)']:.1%}",
-                                    "VaR(95%)": f"{k['VaR(95%)']:.2%}",
-                                    "上行捕获": f"{k['上行捕获']:.2%}", "下行捕获": f"{k['下行捕获']:.2%}",
-                                    "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"
-                                })
+                            s_full = df_comp[col].dropna()
+                            if s_full.empty: continue
+                            
+                            b_full = df_db[sel_bench].reindex(s_full.index).dropna()
+                            common_idx = s_full.index.intersection(b_full.index)
+                            s_final = s_full.loc[common_idx]
+                            b_final = b_full.loc[common_idx]
+                            if len(s_final) < 10: continue
+
+                            k = calculate_metrics(s_final, b_final)
+                            if not k: continue
+
+                            # [Feature] Short-term Capture Ratios
+                            if len(s_final) >= 252:
+                                cap_1y = calculate_capture_stats(s_final.iloc[-252:], b_final.iloc[-252:], "L1Y")
+                                l1y_up = f"{cap_1y['上行捕获']:.2%}"
+                                l1y_down = f"{cap_1y['下行捕获']:.2%}"
+                            else: l1y_up, l1y_down = "-", "-"
+
+                            if len(s_final) >= 126:
+                                cap_6m = calculate_capture_stats(s_final.iloc[-126:], b_final.iloc[-126:], "L6M")
+                                l6m_up = f"{cap_6m['上行捕获']:.2%}"
+                                l6m_down = f"{cap_6m['下行捕获']:.2%}"
+                            else: l6m_up, l6m_down = "-", "-"
+
+                            res_data.append({
+                                "产品名称": col, 
+                                "总收益": f"{k['总收益率']:.2%}", "年化收益": f"{k['年化收益']:.2%}", "最大回撤": f"{k['最大回撤']:.2%}",
+                                "卡玛": f"{k['卡玛比率']:.2f}", "夏普": f"{k['夏普比率']:.2f}", "索提诺": f"{k['索提诺比率']:.2f}",
+                                "全景上行": f"{k['上行捕获']:.2%}", "全景下行": f"{k['下行捕获']:.2%}",
+                                "近1年上行": l1y_up, "近1年下行": l1y_down,
+                                "近半年上行": l6m_up, "近半年下行": l6m_down,
+                                "胜率": f"{k['正收益概率(日)']:.1%}", "VaR(95%)": f"{k['VaR(95%)']:.2%}",
+                                "Alpha": f"{k['Alpha']:.2%}", "Beta": f"{k['Beta']:.2f}"
+                            })
                     if res_data: st.dataframe(pd.DataFrame(res_data).set_index('产品名称'), use_container_width=True)
                     
                     st.markdown("#### 📅 分年度收益率统计")
@@ -513,7 +534,7 @@ if check_password():
                         df_yearly = pd.DataFrame(yearly_data).T
                         st.dataframe(df_yearly[sorted(df_yearly.columns)].style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
-            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，并新增卡玛/索提诺指标。")
+            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，Tab 1 新增近半年/1年捕获率。")
 
         # === Tab 2 ===
         with tabs[1]:
@@ -601,18 +622,17 @@ if check_password():
                         cap_stats = calculate_capture_stats(s_final, b_final, "全周期")
                         m_real = calculate_metrics(s_final, b_final)
                         
-                        # [Feature Upgrade v6.8.0] Enriched Metrics
                         metrics_list.append({
                             "产品名称": col,
                             "存续时长": f"{(s_final.index[-1] - s_final.index[0]).days}天",
                             "年化收益": f"{m_real['年化收益']:.2%}",
-                            "最大回撤": f"{m_real['最大回撤']:.2%}", # New
-                            "卡玛比率": f"{m_real['卡玛比率']:.2f}", # New
+                            "最大回撤": f"{m_real['最大回撤']:.2%}",
+                            "卡玛比率": f"{m_real['卡玛比率']:.2f}",
                             "夏普比率": f"{m_real['夏普比率']:.2f}",
-                            "索提诺": f"{m_real['索提诺比率']:.2f}", # New
+                            "索提诺": f"{m_real['索提诺比率']:.2f}",
                             "上行捕获": f"{cap_stats['上行捕获']:.2%}",
                             "下行捕获": f"{cap_stats['下行捕获']:.2%}",
-                            "胜率": f"{m_real['正收益概率(日)']:.1%}", # New
+                            "胜率": f"{m_real['正收益概率(日)']:.1%}",
                             "CIO点评": cap_stats['CIO点评']
                         })
                     if metrics_list:
