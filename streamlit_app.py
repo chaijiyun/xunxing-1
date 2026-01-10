@@ -8,10 +8,11 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v7.1.0 (Unshackled Edition)
+# 寻星配置分析系统 v7.1.3 (Stable/Safe-Core)
 # Author: 寻星架构师
 # Update Log:
-#   v7.1.0: [Fix] 重构日期选择器，解除回测窗口限制，允许任意时间段回测。
+#   v7.1.3: [Fix] 优化捕获率算法，增加分母微动保护，防止数值噪音。
+#   v7.1.1: [UI] 日期选择器默认锚定 2020-01-01，且解除历史回测限制。
 #   v7.0.0: [New] 风险实验室、蒙特卡洛模拟、VaR计算。
 # ==========================================
 
@@ -94,7 +95,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.0 <small>(Unshackled)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.3 <small>(Safe-Core)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -156,28 +157,58 @@ if check_password():
         return mdd_recovery, max_no_new_high, drawdown
 
     def calculate_capture_stats(nav_series, bench_series, period_name):
+        """
+        [v7.1.3 Fix] 智能捕获率算法
+        特性：引入分母阈值保护，防止低波震荡市中的数值爆炸。
+        """
+        # 1. 基础校验
         if nav_series.empty or len(nav_series) < 2:
             return {"时段": period_name, "上行捕获": np.nan, "下行捕获": np.nan, "CIO点评": "数据不足"}
         
+        # 2. 数据对齐
         p_rets = nav_series.pct_change().dropna()
         b_rets = bench_series.pct_change().dropna()
         valid_idx = p_rets.index.intersection(b_rets.index)
+        
+        if len(valid_idx) < 1:
+            return {"时段": period_name, "上行捕获": np.nan, "下行捕获": np.nan, "CIO点评": "无重叠数据"}
+            
         p_rets = p_rets.loc[valid_idx]
         b_rets = b_rets.loc[valid_idx]
-        
-        if p_rets.empty: return {"时段": period_name, "上行捕获": np.nan, "下行捕获": np.nan, "CIO点评": "数据不足"}
 
+        # 3. 核心修正：安全除法逻辑
+        def safe_capture_ratio(p_segment, b_segment):
+            if b_segment.empty: return 0.0
+            
+            # 使用算术平均计算区间表现
+            b_mean = b_segment.mean()
+            p_mean = p_segment.mean()
+            
+            # [关键风控]：如果基准日均波动小于 0.05% (即几乎横盘)
+            # 强制归零，避免算出 -3000% 这种无意义数字
+            if abs(b_mean) < 0.0005: 
+                return 0.0 
+                
+            return p_mean / b_mean
+
+        # 4. 分组计算
         up_mask = b_rets > 0
         down_mask = b_rets < 0
         
-        up_cap = (p_rets[up_mask].mean() / b_rets[up_mask].mean()) if (up_mask.any() and abs(b_rets[up_mask].mean()) > 1e-6) else 0.0
-        down_cap = (p_rets[down_mask].mean() / b_rets[down_mask].mean()) if (down_mask.any() and abs(b_rets[down_mask].mean()) > 1e-6) else 0.0
+        up_cap = safe_capture_ratio(p_rets[up_mask], b_rets[up_mask])
+        down_cap = safe_capture_ratio(p_rets[down_mask], b_rets[down_mask])
             
+        # 5. 点评逻辑
         comment = "正常"
-        if down_cap > 1.0 and up_cap < 0.8: comment = "⚠️ 策略失效"
-        elif down_cap < 0.8 and up_cap > 0.9: comment = "💎 攻守兼备"
-        elif down_cap > 1.1: comment = "🛡️ 防守退化"
-        elif up_cap < 0.7: comment = "📉 进攻乏力"
+        # 针对中性/低波策略的特殊点评
+        if abs(down_cap) > 5.0: # 再次兜底
+             comment = "⚠️ 数据异常(基准微动)"
+        elif down_cap < 0: 
+            comment = "🛡️ 逆市收益 (Alpha)"
+        elif down_cap > 1.0 and up_cap < 0.8: 
+            comment = "⚠️ 策略失效"
+        elif down_cap < 0.8 and up_cap > 0.9: 
+            comment = "💎 攻守兼备"
         
         return {"时段": period_name, "上行捕获": up_cap, "下行捕获": down_cap, "CIO点评": comment}
 
@@ -334,8 +365,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.1.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.3", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.3 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -435,7 +466,7 @@ if check_password():
         if sel_funds: fee_mode_label = st.sidebar.radio("展示视角", ("组合实得回报", "组合策略表现", "收益与运作成本分析"), index=0)
 
         # ==========================================
-        # [Critical Fix v7.1.0] 修复日期选择器逻辑限制
+        # [Critical Fix v7.1.1] 默认视角锚定 2020-01-01
         # ==========================================
         st.sidebar.markdown("### ⏳ 回测区间 (Global Time Window)")
         
@@ -443,10 +474,20 @@ if check_password():
         data_min_date = df_raw.index.min().date()
         data_max_date = df_raw.index.max().date()
         
-        # 2. 显式设定 min_value 和 max_value，解除 10 年限制
+        # 2. 智能计算默认起始日 (Target: 2020-01-01)
+        target_start = pd.Timestamp("2020-01-01").date()
+        
+        if target_start < data_min_date:
+            default_start = data_min_date  
+        elif target_start > data_max_date:
+            default_start = data_min_date  
+        else:
+            default_start = target_start   # ✅ 正常命中 2020-01-01
+        
+        # 3. 渲染日期选择器
         start_date = st.sidebar.date_input(
             "起始日期", 
-            value=data_min_date, 
+            value=default_start,    # 智能默认值
             min_value=data_min_date, 
             max_value=data_max_date
         )
@@ -457,12 +498,12 @@ if check_password():
             max_value=data_max_date
         )
         
-        # 3. 逻辑防呆
+        # 4. 逻辑防呆
         if start_date >= end_date:
             st.error("❌ 错误：起始日期必须早于截止日期。")
             st.stop()
             
-        # 4. 执行切片
+        # 5. 执行切片
         df_db = df_raw.loc[start_date:end_date].copy()
         
         # ==========================================
