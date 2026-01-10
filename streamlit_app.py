@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.4.0 (Beta)
+# 寻星配置分析系统 v6.5.0 (Internal Alpha)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: 新增滚动捕获率 (Rolling Capture) 监测策略失效
+# Update: 新增分时段（近半年/1年）捕获率静态分析表
 # ==========================================
 
 # ------------------------------------------
@@ -119,7 +119,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.4.0 <small>(Beta)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.5.0 <small>(Internal)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -194,6 +194,58 @@ if check_password():
             max_no_new_high = f"{max(intervals.max(), last_gap) if len(intervals)>0 else last_gap}天"
         return mdd_recovery, max_no_new_high, drawdown
 
+    # [New Helper Function] 专门用于计算指定区间的捕获率
+    def calculate_capture_stats(nav_series, bench_series, period_name):
+        """
+        计算指定时间段的捕获率
+        :param nav_series: 策略净值 (已对齐)
+        :param bench_series: 基准净值 (已对齐)
+        :param period_name: 标签名称 (e.g. "近半年")
+        :return: dict
+        """
+        if nav_series.empty or len(nav_series) < 2:
+            return {"时段": period_name, "上行捕获": np.nan, "下行捕获": np.nan, "CIO点评": "数据不足"}
+            
+        p_rets = nav_series.pct_change().dropna()
+        b_rets = bench_series.pct_change().dropna()
+        
+        # 再次对齐确保安全
+        valid_idx = p_rets.index.intersection(b_rets.index)
+        p_rets = p_rets.loc[valid_idx]
+        b_rets = b_rets.loc[valid_idx]
+        
+        if p_rets.empty:
+            return {"时段": period_name, "上行捕获": np.nan, "下行捕获": np.nan, "CIO点评": "数据不足"}
+
+        up_mask = b_rets > 0
+        down_mask = b_rets < 0
+        
+        # 上行计算
+        if up_mask.any() and abs(b_rets[up_mask].mean()) > 1e-6:
+            up_cap = p_rets[up_mask].mean() / b_rets[up_mask].mean()
+        else:
+            up_cap = 0.0 # 基准无上涨，捕获率无意义
+            
+        # 下行计算
+        if down_mask.any() and abs(b_rets[down_mask].mean()) > 1e-6:
+            down_cap = p_rets[down_mask].mean() / b_rets[down_mask].mean()
+        else:
+            down_cap = 0.0 # 基准无下跌
+            
+        # 简单点评逻辑
+        comment = "正常"
+        if down_cap > 1.0 and up_cap < 0.8: comment = "⚠️ 策略失效"
+        elif down_cap < 0.8 and up_cap > 0.9: comment = "💎 攻守兼备"
+        elif down_cap > 1.1: comment = "🛡️ 防守退化"
+        elif up_cap < 0.7: comment = "📉 进攻乏力"
+        
+        return {
+            "时段": period_name, 
+            "上行捕获": up_cap, 
+            "下行捕获": down_cap,
+            "CIO点评": comment
+        }
+
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
         if len(nav) < 2: return {}
@@ -243,8 +295,8 @@ if check_password():
             "Beta": 0.0, "Current_Beta": 0.0, "Alpha": 0.0,
             "上行捕获": 0.0, "下行捕获": 0.0,
             "Rolling_Beta_Series": pd.Series(dtype='float64'),
-            "Rolling_Up_Cap": pd.Series(dtype='float64'),   # <--- 新增
-            "Rolling_Down_Cap": pd.Series(dtype='float64')  # <--- 新增
+            "Rolling_Up_Cap": pd.Series(dtype='float64'),   
+            "Rolling_Down_Cap": pd.Series(dtype='float64') 
         }
         
         if bench_nav is not None:
@@ -287,13 +339,11 @@ if check_password():
                             up_mask_win = b_win > 0
                             down_mask_win = b_win < 0
                             
-                            # 计算上行捕获 (Window内)
                             if up_mask_win.any() and abs(b_win[up_mask_win].mean()) > 1e-6:
                                 r_up_val = r_win[up_mask_win].mean() / b_win[up_mask_win].mean()
                             else:
-                                r_up_val = 0 # 保持0或按需处理
+                                r_up_val = 0 
                                 
-                            # 计算下行捕获 (Window内)
                             if down_mask_win.any() and abs(b_win[down_mask_win].mean()) > 1e-6:
                                 r_down_val = r_win[down_mask_win].mean() / b_win[down_mask_win].mean()
                             else:
@@ -349,8 +399,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.4.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.4.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.5.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.5.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -714,9 +764,37 @@ if check_password():
                     fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
                     st.plotly_chart(fig_beta, use_container_width=True)
 
-                # [Feature New] 动态捕获率分析
+                # [Feature Upgrade v6.5.0] 动态捕获率：静态表 + 滚动图
                 if not m['Rolling_Up_Cap'].empty and not m['Rolling_Down_Cap'].empty:
-                    st.markdown("#### 🌊 动态攻守能力：滚动捕获率 (Rolling Capture)")
+                    st.markdown("#### 🌊 动态攻守能力分析 (Dynamic Capture Analysis)")
+                    
+                    # 1. 静态分时段分析表
+                    st.markdown("##### 1. 分时段攻守能力雷达 (Static Period Radar)")
+                    capture_rows = []
+                    
+                    # (A) 全历史
+                    capture_rows.append(calculate_capture_stats(star_nav, bn_sync, "全历史 (All-time)"))
+                    
+                    # (B) 近1年 (252天)
+                    if len(star_nav) > 252:
+                        capture_rows.append(calculate_capture_stats(star_nav.iloc[-252:], bn_sync.iloc[-252:], "近1年 (L1Y)"))
+                    
+                    # (C) 近半年 (126天)
+                    if len(star_nav) > 126:
+                        capture_rows.append(calculate_capture_stats(star_nav.iloc[-126:], bn_sync.iloc[-126:], "近半年 (L6M)"))
+                    
+                    if capture_rows:
+                        df_cap_static = pd.DataFrame(capture_rows)
+                        st.dataframe(
+                            df_cap_static.style.format({
+                                "上行捕获": "{:.2%}", 
+                                "下行捕获": "{:.2%}"
+                            }), 
+                            use_container_width=True
+                        )
+
+                    # 2. 滚动趋势图
+                    st.markdown("##### 2. 滚动捕获率趋势 (Rolling Trend)")
                     st.info("💡 **CIO 解读**：关注**“死亡交叉”**。当红色线（下行捕获）大幅上升超过 1.0，而蓝色线（上行捕获）下降时，意味着策略正在失效（跌得比基准多，涨得比基准少）。")
                     
                     fig_cap = go.Figure()
@@ -728,7 +806,7 @@ if check_password():
                         name="上行捕获 (进攻)", 
                         line=dict(color='#1890FF', width=2),
                         fill='tozeroy',
-                        fillcolor='rgba(24, 144, 255, 0.1)' # 淡淡的蓝色填充
+                        fillcolor='rgba(24, 144, 255, 0.1)' 
                     ))
                     
                     # 下行捕获 - Risk Red
@@ -738,7 +816,7 @@ if check_password():
                         name="下行捕获 (防守)", 
                         line=dict(color='#D0021B', width=2),
                         fill='tozeroy',
-                        fillcolor='rgba(208, 2, 27, 0.1)' # 淡淡的红色填充
+                        fillcolor='rgba(208, 2, 27, 0.1)' 
                     ))
                     
                     # 基准线 (1.0)
