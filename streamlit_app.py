@@ -8,13 +8,11 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v7.0.0 (Risk Lab Alpha)
+# 寻星配置分析系统 v7.1.0 (Unshackled Edition)
 # Author: 寻星架构师
-# Context: Web全栈 / 量化金融 / 极度求真
-# Update: 
-#   1. [Tab 4] 新增风险实验室，引入蒙特卡洛模拟 (Monte Carlo Simulation)。
-#   2. [Core] 增加 calculate_var 与 run_monte_carlo 核心算法。
-#   3. [UI] 绘制未来1年财富路径扇形图 (Fan Chart) 与 VaR 分布。
+# Update Log:
+#   v7.1.0: [Fix] 重构日期选择器，解除回测窗口限制，允许任意时间段回测。
+#   v7.0.0: [New] 风险实验室、蒙特卡洛模拟、VaR计算。
 # ==========================================
 
 # ------------------------------------------
@@ -96,7 +94,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.0 <small>(Risk Lab)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.1.0 <small>(Unshackled)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -336,8 +334,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.0.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.1.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.1.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -436,7 +434,39 @@ if check_password():
         fee_mode_label = "组合实得回报"
         if sel_funds: fee_mode_label = st.sidebar.radio("展示视角", ("组合实得回报", "组合策略表现", "收益与运作成本分析"), index=0)
 
-        df_db = df_raw.loc[st.sidebar.date_input("起始日期", df_raw.index.min()):st.sidebar.date_input("截止日期", df_raw.index.max())].copy()
+        # ==========================================
+        # [Critical Fix v7.1.0] 修复日期选择器逻辑限制
+        # ==========================================
+        st.sidebar.markdown("### ⏳ 回测区间 (Global Time Window)")
+        
+        # 1. 获取数据的绝对边界
+        data_min_date = df_raw.index.min().date()
+        data_max_date = df_raw.index.max().date()
+        
+        # 2. 显式设定 min_value 和 max_value，解除 10 年限制
+        start_date = st.sidebar.date_input(
+            "起始日期", 
+            value=data_min_date, 
+            min_value=data_min_date, 
+            max_value=data_max_date
+        )
+        end_date = st.sidebar.date_input(
+            "截止日期", 
+            value=data_max_date, 
+            min_value=data_min_date, 
+            max_value=data_max_date
+        )
+        
+        # 3. 逻辑防呆
+        if start_date >= end_date:
+            st.error("❌ 错误：起始日期必须早于截止日期。")
+            st.stop()
+            
+        # 4. 执行切片
+        df_db = df_raw.loc[start_date:end_date].copy()
+        
+        # ==========================================
+        
         star_nav = None; star_nav_gross = None; star_nav_net = None
 
         if sel_funds and not df_db.empty:
