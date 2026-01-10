@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.3.6 - Visual & Core Update
+# 寻星配置分析系统 v6.4.0 (Beta)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
-# Update: UI颜色锚定 (Blue Benchmark / Custom Heatmap)
+# Update: 新增滚动捕获率 (Rolling Capture) 监测策略失效
 # ==========================================
 
 # ------------------------------------------
@@ -51,7 +51,6 @@ def load_local_config():
     if os.path.exists(CONFIG_FILE_PATH):
         try:
             df = pd.read_pickle(CONFIG_FILE_PATH)
-            # [Hotfix] 数据热补丁：如果旧存档没有策略标签，自动补齐
             if '策略标签' not in df.columns:
                 df.insert(1, '策略标签', '未分类')
             return df
@@ -77,12 +76,8 @@ if 'portfolios_data' not in st.session_state:
 # 2. UI 组件封装 (UI Component)
 # ------------------------------------------
 def render_grouped_selector(label, options, master_df, key_prefix, default_selections=None):
-    """
-    通用组件：根据 master_data 中的策略标签，生成分组折叠选择器
-    """
     if default_selections is None: default_selections = []
     
-    # 1. 数据准备
     strategy_map = {}
     for p in options:
         if '策略标签' in master_df.columns:
@@ -97,7 +92,6 @@ def render_grouped_selector(label, options, master_df, key_prefix, default_selec
     
     sorted_strategies = sorted(strategy_map.keys(), key=lambda x: (x == "未分类", x))
     
-    # 2. 渲染 UI
     final_selection = []
     st.markdown(f"**{label}**")
     
@@ -125,7 +119,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.3.6 <small>(Pro)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.4.0 <small>(Beta)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -145,7 +139,6 @@ if check_password():
     # 4. 核心计算引擎 (Calculation Engine)
     # ------------------------------------------
     
-    # [Kernel v2.0] 绝对价格计提
     def calculate_net_nav_series(gross_nav_series, mgmt_fee_rate=0.0, perf_fee_rate=0.0):
         if gross_nav_series.empty: return gross_nav_series
         
@@ -249,7 +242,9 @@ if check_password():
             "dd_series": dd_s,
             "Beta": 0.0, "Current_Beta": 0.0, "Alpha": 0.0,
             "上行捕获": 0.0, "下行捕获": 0.0,
-            "Rolling_Beta_Series": pd.Series(dtype='float64')
+            "Rolling_Beta_Series": pd.Series(dtype='float64'),
+            "Rolling_Up_Cap": pd.Series(dtype='float64'),   # <--- 新增
+            "Rolling_Down_Cap": pd.Series(dtype='float64')  # <--- 新增
         }
         
         if bench_nav is not None:
@@ -268,25 +263,57 @@ if check_password():
                     bench_total_ret = (bench_nav.loc[common_idx[-1]]/bench_nav.loc[common_idx[0]])**(365.25/(common_idx[-1]-common_idx[0]).days) - 1
                     alpha = ann_ret - (rf + beta * (bench_total_ret - rf))
 
-                    window = int(freq_factor / 2)
+                    # === 滚动计算模块 Start (Rolling Window) ===
+                    window = int(freq_factor / 2) # 默认半年 (约126天)
                     if window < 10: window = 10
+                    
                     rolling_betas = []
                     rolling_dates = []
-                    
+                    rolling_up_cap = []
+                    rolling_down_cap = []
+
                     if len(p_rets) > window:
                         for i in range(window, len(p_rets)):
                             r_win = p_rets.iloc[i-window:i]
                             b_win = b_rets.iloc[i-window:i]
+                            current_date = p_rets.index[i]
+                            
+                            # 1. Rolling Beta
                             var_b = b_win.var()
                             cov_rb = r_win.cov(b_win)
                             rb = cov_rb / var_b if var_b != 0 else 0
+                            
+                            # 2. Rolling Capture Ratio
+                            up_mask_win = b_win > 0
+                            down_mask_win = b_win < 0
+                            
+                            # 计算上行捕获 (Window内)
+                            if up_mask_win.any() and abs(b_win[up_mask_win].mean()) > 1e-6:
+                                r_up_val = r_win[up_mask_win].mean() / b_win[up_mask_win].mean()
+                            else:
+                                r_up_val = 0 # 保持0或按需处理
+                                
+                            # 计算下行捕获 (Window内)
+                            if down_mask_win.any() and abs(b_win[down_mask_win].mean()) > 1e-6:
+                                r_down_val = r_win[down_mask_win].mean() / b_win[down_mask_win].mean()
+                            else:
+                                r_down_val = 0
+                                
                             rolling_betas.append(rb)
-                            rolling_dates.append(p_rets.index[i])
+                            rolling_up_cap.append(r_up_val)
+                            rolling_down_cap.append(r_down_val)
+                            rolling_dates.append(current_date)
+                            
                         curr_beta = rolling_betas[-1] if rolling_betas else beta
                         rb_series = pd.Series(rolling_betas, index=rolling_dates)
+                        ru_series = pd.Series(rolling_up_cap, index=rolling_dates)
+                        rd_series = pd.Series(rolling_down_cap, index=rolling_dates)
                     else:
                         curr_beta = beta
                         rb_series = pd.Series([beta]*len(p_rets), index=p_rets.index)
+                        ru_series = pd.Series(dtype='float64')
+                        rd_series = pd.Series(dtype='float64')
+                    # === 滚动计算模块 End ===
                     
                     up_mask = b_rets > 0
                     down_mask = b_rets < 0
@@ -296,7 +323,9 @@ if check_password():
                     metrics.update({
                         "上行捕获": up_cap, "下行捕获": down_cap, 
                         "Beta": beta, "Current_Beta": curr_beta, "Alpha": alpha,
-                        "Rolling_Beta_Series": rb_series
+                        "Rolling_Beta_Series": rb_series,
+                        "Rolling_Up_Cap": ru_series,     
+                        "Rolling_Down_Cap": rd_series    
                     })
         return metrics
 
@@ -320,8 +349,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.3.6", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.3.6 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.4.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.4.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -537,12 +566,11 @@ if check_password():
                             s = df_comp[col].dropna()
                             if not s.empty: fig_p.add_trace(go.Scatter(x=s.index, y=s/s.iloc[0], name=col))
                     
-                    # [Visual Update] Tab 1 Benchmark also Blue
-                    # Add benchmark to Tab 1 for reference if data exists
                     if sel_bench in df_db.columns:
                         s_bench = df_db[sel_bench].reindex(df_comp.index).ffill()
                         if not s_bench.empty:
                             s_bench = s_bench / s_bench.iloc[0]
+                            # [Visual] Tab 1 Benchmark -> Blue
                             fig_p.add_trace(go.Scatter(x=s_bench.index, y=s_bench, name=f"基准: {sel_bench}", line=dict(color='#1890FF', width=2, dash='solid'), opacity=0.8))
 
                     st.plotly_chart(fig_p.update_layout(title=f"业绩对比 ({comp_fee_mode})", template="plotly_white", height=500), use_container_width=True)
@@ -638,12 +666,12 @@ if check_password():
                 else:
                     fig_main.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 
-                # [Visual Update] Tab 2 Benchmark -> Institutional Blue
+                # [Visual] Tab 2 Benchmark -> Blue
                 fig_main.add_trace(go.Scatter(
                     x=bn_norm.index, 
                     y=bn_norm, 
                     name=f"基准: {sel_bench}", 
-                    line=dict(color='#1890FF', width=2, dash='solid'), # <--- Modified: Blue
+                    line=dict(color='#1890FF', width=2, dash='solid'), 
                     opacity=0.8
                 ))
                 fig_main.update_layout(title="账户权益走势", template="plotly_white", hovermode="x unified", height=450)
@@ -686,6 +714,44 @@ if check_password():
                     fig_beta.update_layout(template="plotly_white", height=350, hovermode="x unified")
                     st.plotly_chart(fig_beta, use_container_width=True)
 
+                # [Feature New] 动态捕获率分析
+                if not m['Rolling_Up_Cap'].empty and not m['Rolling_Down_Cap'].empty:
+                    st.markdown("#### 🌊 动态攻守能力：滚动捕获率 (Rolling Capture)")
+                    st.info("💡 **CIO 解读**：关注**“死亡交叉”**。当红色线（下行捕获）大幅上升超过 1.0，而蓝色线（上行捕获）下降时，意味着策略正在失效（跌得比基准多，涨得比基准少）。")
+                    
+                    fig_cap = go.Figure()
+                    
+                    # 上行捕获 - Institutional Blue
+                    fig_cap.add_trace(go.Scatter(
+                        x=m['Rolling_Up_Cap'].index, 
+                        y=m['Rolling_Up_Cap'], 
+                        name="上行捕获 (进攻)", 
+                        line=dict(color='#1890FF', width=2),
+                        fill='tozeroy',
+                        fillcolor='rgba(24, 144, 255, 0.1)' # 淡淡的蓝色填充
+                    ))
+                    
+                    # 下行捕获 - Risk Red
+                    fig_cap.add_trace(go.Scatter(
+                        x=m['Rolling_Down_Cap'].index, 
+                        y=m['Rolling_Down_Cap'], 
+                        name="下行捕获 (防守)", 
+                        line=dict(color='#D0021B', width=2),
+                        fill='tozeroy',
+                        fillcolor='rgba(208, 2, 27, 0.1)' # 淡淡的红色填充
+                    ))
+                    
+                    # 基准线 (1.0)
+                    fig_cap.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="基准水平 (100%)")
+                    
+                    fig_cap.update_layout(
+                        template="plotly_white", 
+                        height=400, 
+                        hovermode="x unified",
+                        yaxis=dict(title="捕获率 (Capture Ratio)", tickformat=".2f")
+                    )
+                    st.plotly_chart(fig_cap, use_container_width=True)
+
                 df_sub_rets = df_attr.pct_change().fillna(0)
                 risk_vals = initial_w_series * (df_sub_rets.std() * np.sqrt(252)) 
                 contribution_vals = initial_w_series * ((df_attr.iloc[-1] / df_attr.iloc[0]) - 1)
@@ -704,18 +770,17 @@ if check_password():
                     fig_sub_compare.add_trace(go.Scatter(x=star_nav.index, y=star_nav, name=star_nav.name, line=dict(color='red', width=4)))
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
-                # [Visual Update] Tab 3 Heatmap -> Blue(Hedge)-White-Red(Risk)
-                # Define Custom Color Scale
+                # [Visual] Tab 3 Heatmap -> Blue(Hedge)-White-Red(Risk)
                 custom_scale = [
-                    [0.0, '#1890FF'], # -1.0 Blue (Strong Hedge)
-                    [0.5, '#FFFFFF'], # 0.0 White (Uncorrelated)
-                    [1.0, '#D0021B']  # 1.0 Red (Risk Concentration)
+                    [0.0, '#1890FF'], 
+                    [0.5, '#FFFFFF'], 
+                    [1.0, '#D0021B']  
                 ]
                 st.plotly_chart(
                     px.imshow(
                         df_sub_rets.corr(), 
                         text_auto=".2f", 
-                        color_continuous_scale=custom_scale, # <--- Modified
+                        color_continuous_scale=custom_scale, 
                         zmin=-1, 
                         zmax=1, 
                         title="产品相关性矩阵 (Pearson)", 
