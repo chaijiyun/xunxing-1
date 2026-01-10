@@ -8,12 +8,12 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.9.0 (Full-Spectrum Analytics)
+# 寻星配置分析系统 v6.9.1 (Adaptive Fix)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
 # Update: 
-#   1. [Tab 1] 横向对比表新增 "近1年" & "近半年" 上下行捕获率，形成时间维度的风格漂移监控。
-#   2. [Core] 保持双轨制计算逻辑，Tab 1 采用 Raw Data 切片以保证指标纯净度。
+#   1. [Fix] 修复Tab 1在周频/月频数据下，因数据点不足导致近1年捕获率显示为空的问题。
+#   2. [Core] 引入自适应窗口算法 (Adaptive Window)，自动识别日/周/月频切片。
 # ==========================================
 
 # ------------------------------------------
@@ -95,7 +95,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.9.0 <small>(Full-Spectrum)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.9.1 <small>(Adaptive Fix)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -193,6 +193,7 @@ if check_password():
         count = len(dates) - 1
         avg_interval = days_diff / count if count > 0 else 1
         
+        # Frequency Recognition
         if avg_interval <= 1.5: freq_factor = 252.0
         elif avg_interval <= 8: freq_factor = 52.0 
         elif avg_interval <= 35: freq_factor = 12.0
@@ -226,7 +227,8 @@ if check_password():
             "盈亏比": pl_ratio, "VaR(95%)": var_95, "dd_series": dd_s,
             "Beta": 0.0, "Current_Beta": 0.0, "Alpha": 0.0, "上行捕获": 0.0, "下行捕获": 0.0,
             "Rolling_Beta_Series": pd.Series(dtype='float64'),
-            "Rolling_Up_Cap": pd.Series(dtype='float64'), "Rolling_Down_Cap": pd.Series(dtype='float64')
+            "Rolling_Up_Cap": pd.Series(dtype='float64'), "Rolling_Down_Cap": pd.Series(dtype='float64'),
+            "freq_factor": freq_factor # Export for external use
         }
         
         if bench_nav is not None:
@@ -302,8 +304,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.9.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.9.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.9.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v6.9.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -341,7 +343,7 @@ if check_password():
             edited_master = st.data_editor(st.session_state.master_data, column_config={
                 "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                 "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
-            }, use_container_width=True, hide_index=True, key="master_editor_v690")
+            }, use_container_width=True, hide_index=True, key="master_editor_v691")
             
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -496,15 +498,21 @@ if check_password():
                             k = calculate_metrics(s_final, b_final)
                             if not k: continue
 
-                            # [Feature] Short-term Capture Ratios
-                            if len(s_final) >= 252:
-                                cap_1y = calculate_capture_stats(s_final.iloc[-252:], b_final.iloc[-252:], "L1Y")
+                            # [Core Logic v6.9.1] Adaptive Window Calculation
+                            # 动态计算该产品的 "年化观测数 (Annual Observations)"
+                            freq_n = int(k.get('freq_factor', 252)) # 获取calculate_metrics算出的频率因子
+                            window_1y = freq_n
+                            window_6m = max(int(freq_n / 2), 1)
+
+                            # [Feature] Short-term Capture Ratios (Adaptive)
+                            if len(s_final) >= window_1y:
+                                cap_1y = calculate_capture_stats(s_final.iloc[-window_1y:], b_final.iloc[-window_1y:], "L1Y")
                                 l1y_up = f"{cap_1y['上行捕获']:.2%}"
                                 l1y_down = f"{cap_1y['下行捕获']:.2%}"
                             else: l1y_up, l1y_down = "-", "-"
 
-                            if len(s_final) >= 126:
-                                cap_6m = calculate_capture_stats(s_final.iloc[-126:], b_final.iloc[-126:], "L6M")
+                            if len(s_final) >= window_6m:
+                                cap_6m = calculate_capture_stats(s_final.iloc[-window_6m:], b_final.iloc[-window_6m:], "L6M")
                                 l6m_up = f"{cap_6m['上行捕获']:.2%}"
                                 l6m_down = f"{cap_6m['下行捕获']:.2%}"
                             else: l6m_up, l6m_down = "-", "-"
@@ -534,7 +542,7 @@ if check_password():
                         df_yearly = pd.DataFrame(yearly_data).T
                         st.dataframe(df_yearly[sorted(df_yearly.columns)].style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
-            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，Tab 1 新增近半年/1年捕获率。")
+            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，并支持周频/月频数据的短期指标计算。")
 
         # === Tab 2 ===
         with tabs[1]:
