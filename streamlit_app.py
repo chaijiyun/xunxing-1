@@ -8,12 +8,13 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 寻星配置分析系统 v6.9.1 (Adaptive Fix)
+# 寻星配置分析系统 v7.0.0 (Risk Lab Alpha)
 # Author: 寻星架构师
 # Context: Web全栈 / 量化金融 / 极度求真
 # Update: 
-#   1. [Fix] 修复Tab 1在周频/月频数据下，因数据点不足导致近1年捕获率显示为空的问题。
-#   2. [Core] 引入自适应窗口算法 (Adaptive Window)，自动识别日/周/月频切片。
+#   1. [Tab 4] 新增风险实验室，引入蒙特卡洛模拟 (Monte Carlo Simulation)。
+#   2. [Core] 增加 calculate_var 与 run_monte_carlo 核心算法。
+#   3. [UI] 绘制未来1年财富路径扇形图 (Fan Chart) 与 VaR 分布。
 # ==========================================
 
 # ------------------------------------------
@@ -95,7 +96,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v6.9.1 <small>(Adaptive Fix)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.0.0 <small>(Risk Lab)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -182,6 +183,31 @@ if check_password():
         
         return {"时段": period_name, "上行捕获": up_cap, "下行捕获": down_cap, "CIO点评": comment}
 
+    # [New] 蒙特卡洛模拟核心算法
+    def run_monte_carlo(daily_returns, n_sims=1000, n_days=252):
+        if daily_returns.empty: return None
+        
+        mu = daily_returns.mean()
+        sigma = daily_returns.std()
+        last_price = 1.0 # 归一化起点
+        
+        # 几何布朗运动 (Geometric Brownian Motion)
+        # S_t = S_{t-1} * exp((mu - 0.5 * sigma^2) + sigma * Z)
+        # 向量化计算: (n_days, n_sims)
+        dt = 1 # 假设每天步长为1 (参数已基于日频)
+        drift = (mu - 0.5 * sigma**2) * dt
+        shock = sigma * np.sqrt(dt) * np.random.normal(0, 1, (n_days, n_sims))
+        
+        daily_returns_sim = np.exp(drift + shock)
+        price_paths = np.zeros((n_days + 1, n_sims))
+        price_paths[0] = last_price
+        
+        # 累乘计算路径
+        for t in range(1, n_days + 1):
+            price_paths[t] = price_paths[t-1] * daily_returns_sim[t-1]
+            
+        return price_paths
+
     def calculate_metrics(nav, bench_nav=None):
         nav = nav.dropna()
         if len(nav) < 2: return {}
@@ -193,7 +219,6 @@ if check_password():
         count = len(dates) - 1
         avg_interval = days_diff / count if count > 0 else 1
         
-        # Frequency Recognition
         if avg_interval <= 1.5: freq_factor = 252.0
         elif avg_interval <= 8: freq_factor = 52.0 
         elif avg_interval <= 35: freq_factor = 12.0
@@ -206,12 +231,19 @@ if check_password():
         mdd_rec, max_nh, dd_s = get_drawdown_details(nav)
         mdd = dd_s.min()
         
-        rf = 0.019 
-        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
-        downside_returns = returns[returns < 0]
-        downside_std = downside_returns.std() * np.sqrt(freq_factor) if not downside_returns.empty else 1e-6
-        sortino = (ann_ret - rf) / downside_std
-        calmar = ann_ret / abs(mdd) if mdd != 0 else 0
+        # [Optimization v6.9.2] Robust Denominator
+        rf = 0.015 
+        excess_ret = ann_ret - rf
+        sharpe = excess_ret / vol if vol > 1e-6 else 0.0
+        
+        downside_diff = returns - (rf / freq_factor)
+        downside_diff = downside_diff[downside_diff < 0]
+        if not downside_diff.empty:
+            downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(freq_factor)
+        else: downside_std = 1e-6
+        sortino = excess_ret / downside_std if downside_std > 1e-6 else 0.0
+        
+        calmar = ann_ret / abs(mdd) if abs(mdd) > 1e-6 else 0.0
         
         win_days = returns[returns > 0]; loss_days = returns[returns < 0]
         avg_win = win_days.mean() if not win_days.empty else 0
@@ -228,7 +260,7 @@ if check_password():
             "Beta": 0.0, "Current_Beta": 0.0, "Alpha": 0.0, "上行捕获": 0.0, "下行捕获": 0.0,
             "Rolling_Beta_Series": pd.Series(dtype='float64'),
             "Rolling_Up_Cap": pd.Series(dtype='float64'), "Rolling_Down_Cap": pd.Series(dtype='float64'),
-            "freq_factor": freq_factor # Export for external use
+            "freq_factor": freq_factor
         }
         
         if bench_nav is not None:
@@ -304,8 +336,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v6.9.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v6.9.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.0.0", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.0.0 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -343,7 +375,7 @@ if check_password():
             edited_master = st.data_editor(st.session_state.master_data, column_config={
                 "策略标签": st.column_config.SelectboxColumn(options=["主观多头", "量化指增", "量化中性", "量化对冲", "量化选股", "期权套利", "CTA", "多策略", "未分类"], required=True),
                 "开放频率": st.column_config.SelectboxColumn(options=["周度", "月度", "季度", "半年", "1年", "3年封闭"])
-            }, use_container_width=True, hide_index=True, key="master_editor_v691")
+            }, use_container_width=True, hide_index=True, key="master_editor_v700")
             
             if not edited_master.equals(st.session_state.master_data):
                 st.session_state.master_data = edited_master
@@ -423,7 +455,6 @@ if check_password():
                 for f in sel_funds:
                     s_raw = df_db[f].dropna()
                     if s_raw.empty: continue
-                    # [Core Logic: Cash Filling for Portfolio]
                     s_segment = s_raw.reindex(df_port.index)
                     s_segment = s_segment.fillna(method='bfill').fillna(1.0)
                     
@@ -441,7 +472,7 @@ if check_password():
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
-        tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析"])
+        tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析", "🌪️ 风险风洞实验室"])
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
@@ -498,13 +529,10 @@ if check_password():
                             k = calculate_metrics(s_final, b_final)
                             if not k: continue
 
-                            # [Core Logic v6.9.1] Adaptive Window Calculation
-                            # 动态计算该产品的 "年化观测数 (Annual Observations)"
-                            freq_n = int(k.get('freq_factor', 252)) # 获取calculate_metrics算出的频率因子
+                            freq_n = int(k.get('freq_factor', 252)) 
                             window_1y = freq_n
                             window_6m = max(int(freq_n / 2), 1)
 
-                            # [Feature] Short-term Capture Ratios (Adaptive)
                             if len(s_final) >= window_1y:
                                 cap_1y = calculate_capture_stats(s_final.iloc[-window_1y:], b_final.iloc[-window_1y:], "L1Y")
                                 l1y_up = f"{cap_1y['上行捕获']:.2%}"
@@ -686,4 +714,73 @@ if check_password():
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
                 st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale=[[0.0, '#1890FF'], [0.5, '#FFFFFF'], [1.0, '#D0021B']], zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
+
+        # === Tab 4: 风险风洞实验室 ===
+        with tabs[3]:
+            if star_nav is not None:
+                st.subheader("🌪️ 风险风洞实验室 (Risk Lab)")
+                st.info("💡 **蒙特卡洛模拟**：基于组合当前波动率与收益率特征，模拟未来 1 年 (252交易日) 的 1,000 种可能走势。")
+                
+                # 1. 准备数据: 计算组合日收益率 (Cash Filled)
+                # 使用 star_nav (Net or Gross based on selection)
+                star_rets = star_nav.pct_change().dropna()
+                
+                # 2. 运行模拟 (Monte Carlo)
+                if st.button("🚀 启动蒙特卡洛模拟引擎"):
+                    with st.spinner("正在进行 1,000 次平行宇宙推演..."):
+                        sim_paths = run_monte_carlo(star_rets, n_sims=1000, n_days=252)
+                        
+                        if sim_paths is not None:
+                            # 3. 可视化: 扇形图 (Fan Chart)
+                            # 计算分位数路径
+                            p5 = np.percentile(sim_paths, 5, axis=1)
+                            p25 = np.percentile(sim_paths, 25, axis=1)
+                            p50 = np.percentile(sim_paths, 50, axis=1)
+                            p75 = np.percentile(sim_paths, 75, axis=1)
+                            p95 = np.percentile(sim_paths, 95, axis=1)
+                            
+                            x_axis = list(range(len(p50)))
+                            
+                            fig_mc = go.Figure()
+                            # 90% 置信区间 (5% - 95%)
+                            fig_mc.add_trace(go.Scatter(x=x_axis, y=p95, mode='lines', line=dict(width=0), showlegend=False, name='95%'))
+                            fig_mc.add_trace(go.Scatter(x=x_axis, y=p5, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(200, 200, 200, 0.2)', name='90% Range'))
+                            
+                            # 50% 置信区间 (25% - 75%)
+                            fig_mc.add_trace(go.Scatter(x=x_axis, y=p75, mode='lines', line=dict(width=0), showlegend=False, name='75%'))
+                            fig_mc.add_trace(go.Scatter(x=x_axis, y=p25, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(100, 100, 255, 0.3)', name='50% Range'))
+                            
+                            # 中位数路径
+                            fig_mc.add_trace(go.Scatter(x=x_axis, y=p50, mode='lines', line=dict(color='#1890FF', width=2), name='中性预期 (Median)'))
+                            
+                            # 初始点
+                            fig_mc.add_trace(go.Scatter(x=[0], y=[1.0], mode='markers', marker=dict(color='black', size=5), showlegend=False))
+
+                            fig_mc.update_layout(
+                                title="未来1年财富路径推演 (Monte Carlo Fan Chart)",
+                                xaxis_title="未来交易日 (T+n)",
+                                yaxis_title="净值预期 (归一化)",
+                                template="plotly_white",
+                                height=500
+                            )
+                            st.plotly_chart(fig_mc, use_container_width=True)
+                            
+                            # 4. VaR 指标计算
+                            final_values = sim_paths[-1, :]
+                            # VaR: 相对于当前净值(1.0)的亏损百分比
+                            var_95_val = np.percentile(final_values, 5) - 1
+                            var_99_val = np.percentile(final_values, 1) - 1
+                            
+                            c_var1, c_var2, c_var3 = st.columns(3)
+                            c_var1.metric("中性预期收益 (Median)", f"{(np.median(final_values)-1):.2%}")
+                            c_var2.metric("VaR (95%置信度)", f"{var_95_val:.2%}", help="有5%的概率，未来一年亏损超过此数值")
+                            c_var3.metric("VaR (99%置信度)", f"{var_99_val:.2%}", help="有1%的概率，未来一年亏损超过此数值")
+                            
+                            if var_95_val < -0.2:
+                                st.error(f"⚠️ **风控预警**：极端情况下 (95% VaR)，组合可能面临 **{abs(var_95_val):.1%}** 的回撤风险，请检查杠杆或高波资产权重。")
+                            else:
+                                st.success(f"✅ **风控评估**：在 95% 置信度下，未来一年潜在最大亏损控制在 **{abs(var_95_val):.1%}** 以内，属于稳健区间。")
+
+            else: st.info("👈 请在左侧加载组合以启动实验室。")
+
     else: st.info("👋 请上传‘产品数据库’以启动引擎。")
