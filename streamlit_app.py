@@ -8,10 +8,11 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.2.1 (Lite - No MC)
+# 寻星配置分析系统 v7.2.2 (Doc Restored)
 # Author: 寻星架构师
 # Update Log:
-#   v7.2.1: [Remove] 暂时移除 Tab 4 蒙特卡洛模拟模块，仅保留核心分析功能。
+#   v7.2.2: [UI] 补全 Tab 1 指标说明文案，修正标题。
+#   v7.2.1: [Remove] 暂时移除 Tab 4 蒙特卡洛模拟模块。
 #   v7.2.0: [New] 采样窗口控制。
 #   v7.1.4: [Fix] 频率自动侦测。
 # ==========================================
@@ -95,7 +96,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.1 <small>(Lite)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.2 <small>(Doc Restored)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -352,8 +353,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.1", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.2.1 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.2", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.2.2 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -629,7 +630,27 @@ if check_password():
                         df_yearly = pd.DataFrame(yearly_data).T
                         st.dataframe(df_yearly[sorted(df_yearly.columns)].style.format("{:.2%}"), use_container_width=True)
                 else: st.warning("⚠️ 数据不足")
-            st.markdown("---"); st.info("📚 寻星·量化指标说明：全站已统一为百分比格式，并支持周频/月频数据的短期指标计算。")
+            
+            # ==========================================
+            # [Fix v7.2.2] 补全指标说明文案
+            # ==========================================
+            st.markdown("---")
+            with st.expander("📚 寻星配置分析系统指标说明 (Indicator Glossary)", expanded=False):
+                st.markdown("""
+                ### 核心指标定义
+                | 指标名称 | 定义与金融含义 | 寻星算法逻辑 |
+                | :--- | :--- | :--- |
+                | **年化收益** | 几何平均年化回报率 (CAGR)，反映复利增长速度。 | $(1 + R_{total})^{(365.25/Days)} - 1$ |
+                | **最大回撤** | 历史上任何时点买入可能遭受的最大本金亏损幅度。 | $(NAV_t - Peak_t) / Peak_t$ 的最小值 |
+                | **卡玛比率** | 收益回撤比，衡量承受每单位“最大痛苦”所获得的年化回报。 | $AnnualizedReturn / |MaxDrawdown|$ |
+                | **夏普比率** | 衡量承担单位总风险所获得的超额回报。 | $(R_p - R_f) / \sigma_p$，其中 $R_f=1.5\%$ |
+                | **索提诺比率** | 剔除上涨波动的“良性风险”，仅衡量下行风险的回报。 | $(R_p - R_f) / \sigma_{downside}$ |
+                | **上行捕获** | 市场上涨时，产品能跟随上涨的比例。 | $Mean(R_{prod}^{+}) / Mean(R_{bench}^{+})$ |
+                | **下行捕获** | 市场下跌时，产品跟随下跌的比例（越低越好，负数代表逆市上涨）。 | $Mean(R_{prod}^{-}) / Mean(R_{bench}^{-})$ (含微动保护) |
+                | **Beta** | 衡量产品相对于基准的市场敏感度。 | $Cov(R_p, R_b) / Var(R_b)$ |
+                | **Alpha** | 剥离市场波动后，基金经理创造的“纯超额收益”。 | $R_p - (R_f + \beta \times (R_b - R_f))$ |
+                | **VaR (95%)** | 在95%的概率下，未来一日的最大潜在亏损比例。 | 历史收益率分布的 5% 分位数 |
+                """)
 
         # === Tab 2 ===
         with tabs[1]:
