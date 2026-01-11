@@ -8,10 +8,11 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.2.0 (Decoupled Simulation)
+# 寻星配置分析系统 v7.2.1 (Lite - No MC)
 # Author: 寻星架构师
 # Update Log:
-#   v7.2.0: [New] 风险实验室新增“采样窗口”控制，解决短久期资产在长回测周期下指标被稀释的问题。
+#   v7.2.1: [Remove] 暂时移除 Tab 4 蒙特卡洛模拟模块，仅保留核心分析功能。
+#   v7.2.0: [New] 采样窗口控制。
 #   v7.1.4: [Fix] 频率自动侦测。
 # ==========================================
 
@@ -94,7 +95,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.0 <small>(Decoupled)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.1 <small>(Lite)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -194,6 +195,7 @@ if check_password():
         return {"时段": period_name, "上行捕获": up_cap, "下行捕获": down_cap, "CIO点评": comment}
 
     # [New] 蒙特卡洛模拟核心算法 (Updated for Frequency)
+    # 暂时保留在代码库中，但UI不调用
     def run_monte_carlo(period_returns, n_sims=1000, n_steps=252):
         if period_returns.empty: return None
         
@@ -350,8 +352,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.0", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.2.0 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.1", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.2.1 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -528,7 +530,8 @@ if check_password():
                 bn_sync = df_db.loc[star_nav.index, sel_bench]
                 bn_norm = bn_sync / bn_sync.iloc[0]
 
-        tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析", "🌪️ 风险风洞实验室"])
+        # [Modified v7.2.1] Removed 4th Tab (Monte Carlo)
+        tabs = st.tabs(["⚔️ 配置池产品分析", "🚀 组合全景图", "🔍 穿透归因分析"])
 
         if star_nav is not None:
             m = calculate_metrics(star_nav, bn_sync)
@@ -778,112 +781,6 @@ if check_password():
                 st.plotly_chart(fig_sub_compare.update_layout(template="plotly_white", height=500), use_container_width=True)
                 
                 st.plotly_chart(px.imshow(df_sub_rets.corr(), text_auto=".2f", color_continuous_scale=[[0.0, '#1890FF'], [0.5, '#FFFFFF'], [1.0, '#D0021B']], zmin=-1, zmax=1, title="产品相关性矩阵 (Pearson)", height=600), use_container_width=True)
-
-        # === Tab 4: 风险风洞实验室 (Enhanced v7.2.0) ===
-        with tabs[3]:
-            if star_nav is not None:
-                st.subheader("🌪️ 风险风洞实验室 (Risk Lab)")
-                
-                # [New v7.2.0] Simulation Window Control
-                st.markdown("##### 1. 训练数据采样窗口 (Training Window)")
-                
-                sim_options = ["全量数据 (不推荐)", "最近 5 年", "最近 3 年", "最近 1 年", "最近 6 个月"]
-                # 默认选最近 1 年，因为这通常反映了产品当前的真实策略特征
-                sim_period = st.select_slider(
-                    "请选择用于训练蒙特卡洛模型的数据长度：",
-                    options=sim_options,
-                    value="最近 1 年"
-                )
-                
-                # 1. 准备数据: 计算组合日收益率 (Cash Filled)
-                star_rets = star_nav.pct_change().dropna()
-                
-                # [Core Logic] Data Slicing based on Selection
-                slice_date = star_rets.index.min()
-                if sim_period == "最近 5 年":
-                    slice_date = star_rets.index.max() - timedelta(days=365*5)
-                elif sim_period == "最近 3 年":
-                    slice_date = star_rets.index.max() - timedelta(days=365*3)
-                elif sim_period == "最近 1 年":
-                    slice_date = star_rets.index.max() - timedelta(days=365)
-                elif sim_period == "最近 6 个月":
-                    slice_date = star_rets.index.max() - timedelta(days=180)
-                
-                # Apply Slice
-                star_rets_trained = star_rets[star_rets.index >= slice_date]
-                
-                if star_rets_trained.empty:
-                    st.error(f"❌ 数据不足：所选窗口内无有效数据。请选择更长的时间窗口。")
-                else:
-                    st.caption(f"📅 实际训练区间: {star_rets_trained.index.min().date()} 至 {star_rets_trained.index.max().date()} (样本数: {len(star_rets_trained)})")
-                    
-                    # [Fix v7.1.4] 智能侦测数据频率
-                    dates_mc = star_rets_trained.index
-                    sim_steps = 252 # Default
-                    freq_label = "交易日"
-                    
-                    if len(dates_mc) > 1:
-                        avg_days = (dates_mc[-1] - dates_mc[0]).days / (len(dates_mc) - 1)
-                        if avg_days <= 1.5:
-                            sim_steps = 252; freq_label = "交易日 (Daily)"
-                        elif avg_days <= 8:
-                            sim_steps = 52; freq_label = "周 (Weekly)"
-                        elif avg_days <= 35:
-                            sim_steps = 12; freq_label = "月 (Monthly)"
-                        else:
-                            sim_steps = int(365 / avg_days); freq_label = "期 (Periods)"
-                    
-                    # 2. 运行模拟 (Monte Carlo)
-                    if st.button("🚀 启动蒙特卡洛模拟引擎"):
-                        with st.spinner(f"正在基于 {freq_label} 频率进行 1,000 次平行宇宙推演..."):
-                            sim_paths = run_monte_carlo(star_rets_trained, n_sims=1000, n_steps=sim_steps)
-                            
-                            if sim_paths is not None:
-                                # 3. 可视化: 扇形图 (Fan Chart)
-                                p5 = np.percentile(sim_paths, 5, axis=1)
-                                p25 = np.percentile(sim_paths, 25, axis=1)
-                                p50 = np.percentile(sim_paths, 50, axis=1)
-                                p75 = np.percentile(sim_paths, 75, axis=1)
-                                p95 = np.percentile(sim_paths, 95, axis=1)
-                                
-                                x_axis = list(range(len(p50)))
-                                
-                                fig_mc = go.Figure()
-                                # 90% 置信区间
-                                fig_mc.add_trace(go.Scatter(x=x_axis, y=p95, mode='lines', line=dict(width=0), showlegend=False, name='95%'))
-                                fig_mc.add_trace(go.Scatter(x=x_axis, y=p5, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(200, 200, 200, 0.2)', name='90% Range'))
-                                
-                                # 50% 置信区间
-                                fig_mc.add_trace(go.Scatter(x=x_axis, y=p75, mode='lines', line=dict(width=0), showlegend=False, name='75%'))
-                                fig_mc.add_trace(go.Scatter(x=x_axis, y=p25, mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(100, 100, 255, 0.3)', name='50% Range'))
-                                
-                                # 中位数路径
-                                fig_mc.add_trace(go.Scatter(x=x_axis, y=p50, mode='lines', line=dict(color='#1890FF', width=2), name='中性预期 (Median)'))
-                                fig_mc.add_trace(go.Scatter(x=[0], y=[1.0], mode='markers', marker=dict(color='black', size=5), showlegend=False))
-
-                                fig_mc.update_layout(
-                                    title=f"未来1年财富路径推演 (Steps={sim_steps})",
-                                    xaxis_title=f"未来 {freq_label}",
-                                    yaxis_title="净值预期 (归一化)",
-                                    template="plotly_white",
-                                    height=500
-                                )
-                                st.plotly_chart(fig_mc, use_container_width=True)
-                                
-                                # 4. VaR 指标计算
-                                final_values = sim_paths[-1, :]
-                                var_95_val = np.percentile(final_values, 5) - 1
-                                var_99_val = np.percentile(final_values, 1) - 1
-                                
-                                c_var1, c_var2, c_var3 = st.columns(3)
-                                c_var1.metric("中性预期收益 (Median)", f"{(np.median(final_values)-1):.2%}")
-                                c_var2.metric("VaR (95%置信度)", f"{var_95_val:.2%}", help="有5%的概率，未来一年亏损超过此数值")
-                                c_var3.metric("VaR (99%置信度)", f"{var_99_val:.2%}", help="有1%的概率，未来一年亏损超过此数值")
-                                
-                                if var_95_val < -0.2:
-                                    st.error(f"⚠️ **风控预警**：极端情况下 (95% VaR)，组合可能面临 **{abs(var_95_val):.1%}** 的回撤风险，请检查杠杆或高波资产权重。")
-                                else:
-                                    st.success(f"✅ **风控评估**：在 95% 置信度下，未来一年潜在最大亏损控制在 **{abs(var_95_val):.1%}** 以内，属于稳健区间。")
 
             else: st.info("👈 请在左侧加载组合以启动实验室。")
 
