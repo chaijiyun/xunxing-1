@@ -8,13 +8,12 @@ import os
 from datetime import datetime, timedelta
 
 # ==========================================
-# 寻星配置分析系统 v7.2.2 (Doc Restored)
+# 寻星配置分析系统 v7.2.3 (Client-Friendly Doc)
 # Author: 寻星架构师
 # Update Log:
-#   v7.2.2: [UI] 补全 Tab 1 指标说明文案，修正标题。
+#   v7.2.3: [UX] 将指标说明中的数学公式替换为“金融白话”，提升客户阅读体验。
+#   v7.2.2: [UI] 补全 Tab 1 指标说明文案。
 #   v7.2.1: [Remove] 暂时移除 Tab 4 蒙特卡洛模拟模块。
-#   v7.2.0: [New] 采样窗口控制。
-#   v7.1.4: [Fix] 频率自动侦测。
 # ==========================================
 
 # ------------------------------------------
@@ -96,7 +95,7 @@ def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
     if not st.session_state["password_correct"]:
         st.markdown("<br><br>", unsafe_allow_html=True) 
-        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.2 <small>(Doc Restored)</small></h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #1E40AF;'>寻星配置分析系统 v7.2.3 <small>(Docs)</small></h1>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -353,8 +352,8 @@ if check_password():
     # ------------------------------------------
     # 5. UI 界面与交互 (Interface)
     # ------------------------------------------
-    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.2", page_icon="🏛️")
-    st.sidebar.title("🏛️ 寻星 v7.2.2 · 驾驶舱")
+    st.set_page_config(layout="wide", page_title="寻星配置分析系统 v7.2.3", page_icon="🏛️")
+    st.sidebar.title("🏛️ 寻星 v7.2.3 · 驾驶舱")
     uploaded_file = st.sidebar.file_uploader("📂 第一步：上传净值数据库 (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
@@ -632,24 +631,24 @@ if check_password():
                 else: st.warning("⚠️ 数据不足")
             
             # ==========================================
-            # [Fix v7.2.2] 补全指标说明文案
+            # [Fix v7.2.3] 优化后的金融白话版指标说明
             # ==========================================
             st.markdown("---")
             with st.expander("📚 寻星配置分析系统指标说明 (Indicator Glossary)", expanded=False):
                 st.markdown("""
-                ### 核心指标定义
-                | 指标名称 | 定义与金融含义 | 寻星算法逻辑 |
+                ### 核心指标定义 (Key Metrics)
+                | 指标名称 | 定义与金融含义 | 寻星算法逻辑 (Client-Friendly) |
                 | :--- | :--- | :--- |
-                | **年化收益** | 几何平均年化回报率 (CAGR)，反映复利增长速度。 | $(1 + R_{total})^{(365.25/Days)} - 1$ |
-                | **最大回撤** | 历史上任何时点买入可能遭受的最大本金亏损幅度。 | $(NAV_t - Peak_t) / Peak_t$ 的最小值 |
-                | **卡玛比率** | 收益回撤比，衡量承受每单位“最大痛苦”所获得的年化回报。 | $AnnualizedReturn / |MaxDrawdown|$ |
-                | **夏普比率** | 衡量承担单位总风险所获得的超额回报。 | $(R_p - R_f) / \sigma_p$，其中 $R_f=1.5\%$ |
-                | **索提诺比率** | 剔除上涨波动的“良性风险”，仅衡量下行风险的回报。 | $(R_p - R_f) / \sigma_{downside}$ |
-                | **上行捕获** | 市场上涨时，产品能跟随上涨的比例。 | $Mean(R_{prod}^{+}) / Mean(R_{bench}^{+})$ |
-                | **下行捕获** | 市场下跌时，产品跟随下跌的比例（越低越好，负数代表逆市上涨）。 | $Mean(R_{prod}^{-}) / Mean(R_{bench}^{-})$ (含微动保护) |
-                | **Beta** | 衡量产品相对于基准的市场敏感度。 | $Cov(R_p, R_b) / Var(R_b)$ |
-                | **Alpha** | 剥离市场波动后，基金经理创造的“纯超额收益”。 | $R_p - (R_f + \beta \times (R_b - R_f))$ |
-                | **VaR (95%)** | 在95%的概率下，未来一日的最大潜在亏损比例。 | 历史收益率分布的 5% 分位数 |
+                | **年化收益** | 几何平均年化回报率 (CAGR)。 | 将总收益折算为复利增长的年度平均速度。 |
+                | **最大回撤** | 历史最大本金亏损幅度。 | 模拟在历史上最高点买入后，账户可能出现的最大浮亏比例。 |
+                | **卡玛比率** | 收益回撤比 (Calmar Ratio)。 | 衡量承受每一单位“最大痛苦（回撤）”所换取的年化回报，越高越好。 |
+                | **夏普比率** | 风险调整后收益 (Sharpe Ratio)。 | 剔除无风险收益后，每承担一单位总波动风险所获得的超额回报。 |
+                | **索提诺比率** | 下行风险收益比 (Sortino Ratio)。 | 仅考核导致亏损的“坏波动”，衡量承担下行风险的获利效率。 |
+                | **上行捕获** | 进攻能力 (Upside Capture)。 | 当基准指数上涨时，产品能跟随获取多少比例的收益。 |
+                | **下行捕获** | 防守能力 (Downside Capture)。 | 当基准指数下跌时，产品会跟随承担多少比例的跌幅（越低越好，负数代表逆市上涨）。 |
+                | **Beta** | 市场敏感度。 | 产品净值对市场大盘涨跌的敏感程度（1.0代表完全同步，0代表不相关）。 |
+                | **Alpha** | 超额收益能力。 | 剥离市场波动影响后，完全源于基金经理个人能力的“纯超额收益”。 |
+                | **VaR (95%)** | 在险价值 (Value at Risk)。 | 统计学预测：在正常市场概率下（95%），未来一天最大的潜在亏损边界。 |
                 """)
 
         # === Tab 2 ===
